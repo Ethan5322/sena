@@ -48,13 +48,14 @@ const paystack = {
     return { authorization_url: `https://pay.test/${reference}`, reference };
   },
 };
-const messenger = {
-  send: async ({ channel, to, text }) => {
-    sent.push({ kind: 'message', channel, to, text });
-    return { ok: true, id: `msg_${sent.length}` };
+const notifier = {
+  channel: 'email',
+  sendPaymentLink: async ({ to, url, pkg }) => {
+    sent.push({ kind: 'payment_link', to, url, total: pkg.total });
+    return { ok: true, id: `mail_${sent.length}` };
   },
   sendConfirmation: async ({ to, pkg }) => {
-    sent.push({ kind: 'confirmation', to, guest_id: pkg.guest_id.guest_id_number });
+    sent.push({ kind: 'confirmation', to, card_url: pkg.card_url });
     return { ok: true, id: 'conf_1' };
   },
   notifyOwner: async ({ to, pkg }) => {
@@ -79,7 +80,7 @@ await db.exec(`
 `);
 await db.exec(fs.readFileSync(path.join(ROOT, 'supabase/sena-all-in-one.sql'), 'utf8'));
 
-const router = createRouter({ db, paystack, messenger });
+const router = createRouter({ db, paystack, notifier, publicUrl: 'https://sena.test' });
 
 // The dialled number is what tells Sena WHICH hotel she is answering for.
 const DEMO_LINE = '+27101234567';
@@ -179,12 +180,42 @@ ok(noIds[0].n === 0, 'and no guest ID was minted — no QR exists for an unpaid 
 console.log('\n  ── the money ──\n');
 
 // ── 3. Payment link ─────────────────────────────────────────────────────────
-const link = await router.handle(
-  'send_payment_link',
-  { booking_id: held.booking_id, channel: 'whatsapp' },
-  call
+// GATE: email is the ONLY channel, so a guest without an address cannot be sent a
+// link at all. Sena must go back and ask, not shrug and carry on.
+const noEmail = newCall();
+const a3 = await router.handle(
+  'check_availability',
+  { check_in: day(90), check_out: day(92), guests: 1 },
+  noEmail
 );
+const h3 = await router.handle(
+  'hold_room',
+  { room_id: a3.rooms[0].room_id, check_in: day(90), check_out: day(92), guests_count: 1 },
+  noEmail
+);
+await router.handle(
+  'save_guest_details',
+  {
+    booking_id: h3.booking_id,
+    full_name: 'No Email',
+    phone: '+27829999999',
+    guests_count: 1,
+    double_confirmed: true,
+  },
+  noEmail
+);
+const cannotSend = await router.handle('send_payment_link', { booking_id: h3.booking_id }, noEmail);
+ok(
+  !cannotSend.ok && cannotSend.reason === 'no_email',
+  'send_payment_link REFUSED when the guest gave no email — there is nowhere to send it'
+);
+
+const link = await router.handle('send_payment_link', { booking_id: held.booking_id }, call);
 ok(link.ok && link.total === held.total, `payment link sent for R${link.total} — the held total, not a new one`);
+ok(
+  link.channel === 'email' && link.sent_to === 'thabo@example.com',
+  `delivered by email to ${link.sent_to} — no WhatsApp, no SMS, no subscription`
+);
 
 const { rows: payRows } = await db.query(
   `select provider_reference, amount_cents, status from sena_payments where booking_id = $1`,
@@ -236,7 +267,7 @@ ok(paid.paid, 'check_payment_status now says paid — Sena may confirm');
 
 const pkg = await router.handle('send_confirmation_package', { booking_id: held.booking_id }, call);
 ok(pkg.ok && pkg.guest_id_number, `confirmation package sent — guest ID ${pkg.guest_id_number}`);
-ok(sent.some((s) => s.kind === 'owner'), 'the owner was notified on WhatsApp (§8)');
+ok(sent.some((s) => s.kind === 'owner'), 'the owner was emailed the new booking (§8)');
 
 // One booking, one QR. A retried tool call must NOT mint a second valid ID.
 const pkgAgain = await router.handle('send_confirmation_package', { booking_id: held.booking_id }, call);
@@ -287,7 +318,7 @@ const esc = await router.handle(
   newCall()
 );
 ok(esc.ok && esc.transfer_to === '+27688529333', `escalation returns the hotel's human line (${esc.transfer_to})`);
-ok(sent.some((s) => s.kind === 'alert'), 'and the owner is alerted on WhatsApp immediately');
+ok(sent.some((s) => s.kind === 'alert'), 'and the owner is emailed immediately');
 
 // ── A tool that does not exist ──────────────────────────────────────────────
 // The worst failure mode in the whole system: Vapi calls a tool we never built,
@@ -307,7 +338,7 @@ await db.query(
         values ('Other Hotel', '+27119999999', 'n/a', '+27110000000', '+27110000000')`
 );
 const { rows: other } = await db.query(`select id from sena_hotels where name = 'Other Hotel'`);
-const foreign = createRouter({ db, paystack, messenger, defaultHotelId: other[0].id });
+const foreign = createRouter({ db, paystack, notifier, defaultHotelId: other[0].id });
 let blocked = false;
 try {
   await foreign.handle(

@@ -15,7 +15,7 @@ import crypto from 'node:crypto';
 import { createPgDb } from '../../src/db.mjs';
 import { createRouter, ToolError } from '../../src/router.mjs';
 import { createPaystack } from '../../src/adapters/paystack.mjs';
-import { createMessenger } from '../../src/adapters/messenger.mjs';
+import { createNotifier } from '../../src/adapters/notifier.mjs';
 
 // Reused across warm invocations; a fresh pool per call exhausts Supabase.
 let cached;
@@ -27,12 +27,12 @@ function services() {
     secretKey: process.env.PAYSTACK_SECRET_KEY,
     callbackUrl: process.env.PAYSTACK_CALLBACK_URL,
   });
-  const messenger = createMessenger({
-    whatsappToken: process.env.WHATSAPP_TOKEN,
-    whatsappPhoneId: process.env.WHATSAPP_PHONE_ID,
-    twilioSid: process.env.TWILIO_ACCOUNT_SID,
-    twilioToken: process.env.TWILIO_AUTH_TOKEN,
-    twilioFrom: process.env.TWILIO_SMS_FROM,
+  const notifier = createNotifier({
+    host: process.env.SMTP_HOST,
+    port: process.env.SMTP_PORT,
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+    from: process.env.SMTP_FROM,
   });
 
   cached = {
@@ -40,8 +40,9 @@ function services() {
     router: createRouter({
       db,
       paystack,
-      messenger,
+      notifier,
       defaultHotelId: process.env.SENA_DEFAULT_HOTEL_ID || null,
+      publicUrl: process.env.SENA_PUBLIC_URL || '',
     }),
   };
   return cached;

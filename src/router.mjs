@@ -42,7 +42,9 @@ const digitsOnly = (s) => (s || '').replace(/[^\d]/g, '');
 export function createRouter({
   db,
   paystack,
-  messenger,
+  // How the booking reaches the guest. Email, not WhatsApp — see
+  // src/adapters/notifier.mjs for why WhatsApp cannot do this job at all.
+  notifier,
   defaultHotelId = null,
   // Where the guest's ID card is served from. Without it the WhatsApp message
   // carries a number the guest cannot show to a scanner.
@@ -271,11 +273,16 @@ export function createRouter({
     ]);
     const guest = g[0];
 
+    // Email is the ONLY channel (see notifier.mjs). Without an address there is
+    // nowhere to send the link, and the guest cannot pay. This is not a nicety —
+    // it is the difference between a booking and a lost call.
     if (!guest.email) {
       return {
         ok: false,
         reason: 'no_email',
-        say: `Ask the guest for an email address — the payment receipt needs one.`,
+        say:
+          `You need an email address to send the payment link. Ask for it, read it ` +
+          `back letter by letter, and save the details again.`,
       };
     }
 
@@ -298,14 +305,11 @@ export function createRouter({
       [booking.id, reference, amount, s.hotel.currency]
     );
 
-    const channel = args.channel || 'whatsapp';
-    const text =
-      `${s.hotel.name} — booking ${booking.reference}\n` +
-      `${s.hotel.currency} ${toMajor(amount).toFixed(2)} to confirm your room.\n` +
-      `Pay securely here: ${authorization_url}\n` +
-      `This link holds your room for ${s.hotel.hold_minutes} minutes.`;
-
-    const sent = await messenger.send({ channel, to: guest.phone, text });
+    const sent = await notifier.sendPaymentLink({
+      to: guest.email,
+      url: authorization_url,
+      pkg: { hotel: s.hotel, booking, guest, total: toMajor(amount) },
+    });
 
     await db.query(
       `insert into sena_notifications_log
@@ -313,8 +317,8 @@ export function createRouter({
             values ($1, $2, $3, 'payment_link', $4, $5, $6)`,
       [
         booking.id,
-        channel,
-        guest.phone,
+        notifier.channel,
+        guest.email,
         sent.ok ? 'sent' : 'failed',
         sent.id || null,
         sent.ok ? null : String(sent.error || 'send failed'),
@@ -325,7 +329,7 @@ export function createRouter({
       return {
         ok: false,
         reason: 'link_not_delivered',
-        say: `The link did not go through. Offer to try SMS instead, or escalate.`,
+        say: `The link did not go through. Apologise and escalate — do not keep retrying.`,
       };
     }
 
@@ -333,7 +337,8 @@ export function createRouter({
       ok: true,
       total: toMajor(amount),
       currency: s.hotel.currency,
-      channel,
+      channel: notifier.channel,
+      sent_to: guest.email,
       hold_minutes: s.hotel.hold_minutes,
     };
   }
@@ -419,20 +424,23 @@ export function createRouter({
         : null,
     };
 
-    const guestSend = await messenger.sendConfirmation({ to: guest.phone, email: guest.email, pkg });
-    const ownerSend = await messenger.notifyOwner({ to: s.hotel.escalation_whatsapp, pkg });
+    const guestSend = await notifier.sendConfirmation({ to: guest.email, pkg });
+    // The owner's copy (§8). sena_hotels.email is where it goes — for the demo,
+    // point that row at a real inbox: update sena_hotels set email = '...'
+    const ownerSend = await notifier.notifyOwner({ to: s.hotel.email, pkg });
 
     for (const [recipient, template, sent] of [
-      [guest.phone, 'guest_confirmation', guestSend],
-      [s.hotel.escalation_whatsapp, 'owner_new_booking', ownerSend],
+      [guest.email, 'guest_confirmation', guestSend],
+      [s.hotel.email, 'owner_new_booking', ownerSend],
     ]) {
       await db.query(
         `insert into sena_notifications_log
                 (booking_id, channel, recipient, template, status, provider_message_id, error)
-              values ($1, 'whatsapp', $2, $3, $4, $5, $6)`,
+              values ($1, $2, $3, $4, $5, $6, $7)`,
         [
           booking.id,
-          recipient,
+          notifier.channel,
+          recipient || 'unknown',
           template,
           sent.ok ? 'sent' : 'failed',
           sent.id || null,
@@ -496,12 +504,14 @@ export function createRouter({
       [args.reason, s.callId]
     );
 
-    await messenger.alertOwner({
-      to: s.hotel.escalation_whatsapp,
+    // The email is the paper trail. The REAL handover is the transfer below —
+    // an upset guest is not made to wait while someone checks their inbox.
+    await notifier.alertOwner({
+      to: s.hotel.email,
+      subject: `Sena — call needs a person (${args.reason})`,
       text:
-        `SENA — call needs a person.\n` +
         `Reason: ${args.reason}\n` +
-        `Caller: ${ctx.fromNumber || 'unknown'}\n` +
+        `Caller: ${ctx.fromNumber || 'unknown'}\n\n` +
         `${args.summary}`,
     });
 

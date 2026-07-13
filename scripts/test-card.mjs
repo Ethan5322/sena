@@ -58,7 +58,7 @@ const noop = async () => ({ ok: true, id: 'x' });
 const router = createRouter({
   db,
   paystack: { initialize: async ({ reference }) => ({ authorization_url: `https://pay.test/${reference}` }) },
-  messenger: { send: noop, sendConfirmation: noop, notifyOwner: noop, alertOwner: noop },
+  notifier: { channel: 'email', sendPaymentLink: noop, sendConfirmation: noop, notifyOwner: noop, alertOwner: noop },
   publicUrl: 'https://sena.test',
 });
 

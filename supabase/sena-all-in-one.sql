@@ -240,8 +240,10 @@ create table if not exists sena_payments (
 create index if not exists sena_payments_booking_idx on sena_payments(booking_id);
 
 -- ── sena_notifications_log ───────────────────────────────────────────────────────
--- §8. Every WhatsApp/SMS/email we send. When an owner says "I never got the
--- booking", this table answers it.
+-- §8. Every message we send. Email is the channel (WhatsApp cannot deliver to a
+-- guest who only phoned us — see src/adapters/notifier.mjs), but `channel` stays
+-- free text so another one can be added without a migration. When an owner says
+-- "I never got the booking", this table answers it.
 create table if not exists sena_notifications_log (
   id                  uuid primary key default gen_random_uuid(),
   booking_id          uuid references sena_bookings(id) on delete cascade,
@@ -668,6 +670,9 @@ with h as (
   ) values (
     'Jacaranda Court Hotel',
     '+27101234567',                       -- demo line, not a real hotel
+    -- The OWNER's inbox: every booking, escalation and failed payment lands here
+    -- (§8). Point it at a real address before demoing, or the owner sees nothing:
+    --   update sena_hotels set email = 'you@example.com' where is_demo;
     'stay@jacarandacourt.example',
     '14 Jacaranda Avenue, Hatfield, Pretoria, 0083',
     'ZAR',
@@ -678,7 +683,7 @@ with h as (
     -- because it will be said out loud.
     'Free cancellation up to 48 hours before check-in, and you get a full refund. ' ||
     'Inside 48 hours, the first night is charged. No-shows are charged the first night. ' ||
-    'To cancel, call us or reply to your confirmation on WhatsApp.',
+    'To cancel, call us or reply to your confirmation email.',
     'Check-in from 2pm and check-out by 10am. Early check-in and late check-out are ' ||
     'free when the room is available, but I have to get that approved by the front desk ' ||
     'rather than promise it on the call.',

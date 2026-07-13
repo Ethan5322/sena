@@ -124,12 +124,11 @@
         "type": "function",
         "function": {
           "name": "send_payment_link",
-          "description": "Send the guest a secure Paystack payment link by WhatsApp/SMS during the call. Never take card details by voice.",
+          "description": "Email the guest a secure Paystack payment link during the call. Never take card details by voice. Fails if you have not captured an email address — if it does, ask for one, read it back letter by letter, and save the details again.",
           "parameters": {
             "type": "object",
             "properties": {
-              "booking_id": { "type": "string" },
-              "channel":    { "type": "string", "enum": ["whatsapp", "sms"], "default": "whatsapp" }
+              "booking_id": { "type": "string" }
             },
             "required": ["booking_id"]
           }
@@ -151,7 +150,7 @@
         "type": "function",
         "function": {
           "name": "send_confirmation_package",
-          "description": "Send the Booking Confirmation PDF and the single-use QR Guest ID by WhatsApp and email. Call ONLY after check_payment_status returned paid.",
+          "description": "Email the guest their confirmation and a link to their single-use QR Guest ID card, and notify the owner. Call ONLY after check_payment_status returned paid.",
           "parameters": {
             "type": "object",
             "properties": { "booking_id": { "type": "string" } },

@@ -197,8 +197,10 @@ create table if not exists sena_payments (
 create index if not exists sena_payments_booking_idx on sena_payments(booking_id);
 
 -- ── sena_notifications_log ───────────────────────────────────────────────────────
--- §8. Every WhatsApp/SMS/email we send. When an owner says "I never got the
--- booking", this table answers it.
+-- §8. Every message we send. Email is the channel (WhatsApp cannot deliver to a
+-- guest who only phoned us — see src/adapters/notifier.mjs), but `channel` stays
+-- free text so another one can be added without a migration. When an owner says
+-- "I never got the booking", this table answers it.
 create table if not exists sena_notifications_log (
   id                  uuid primary key default gen_random_uuid(),
   booking_id          uuid references sena_bookings(id) on delete cascade,

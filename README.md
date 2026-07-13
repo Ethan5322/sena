@@ -24,13 +24,15 @@ Built by **MuleSoo Digital Services**, Pretoria.
 | 4. Tool router (call → hold → pay → confirm) | **Done — every gate attacked** |
 | 5. Paystack webhook | **Done — signature, underpayment, idempotency** |
 | 6. Guest ID delivery + front-desk scanner | **Done — the QR round trip is proven** |
-| 7. Deploy to Vercel + connect a Twilio number | Not started — this is what makes it ring |
-| 8. Owner dashboard | Not started — §2 promises owner visibility at six stages |
-| 9. Scheduled jobs (expire holds, arrivals, post-stay) | Not started |
-| 10. Booking confirmation PDF | Not started — gets the MuleSoo **QR credit stamp** |
-| 11. Owner setup guide | Not started |
+| 7. Email delivery (payment link + guest ID) | **Done — no WhatsApp, no SMS, no subscription** |
+| 8. Deploy to Vercel + a phone number | Not started — this is what makes it ring |
+| 9. Owner dashboard | Not started — §2 promises owner visibility at six stages |
+| 10. Cancellations | Not started — `cancelled` exists in the DB and nothing sets it |
+| 11. Scheduled jobs (expire holds, arrivals, post-stay) | Not started |
+| 12. Booking confirmation PDF | Not started — gets the MuleSoo **QR credit stamp** |
 
-**69 checks, four suites, all against a real Postgres.** `npm test`.
+**Four suites, all against a real Postgres.** `npm test`. Setup:
+[docs/setup-and-deploy.md](docs/setup-and-deploy.md).
 
 ### Where we are, in one paragraph
 
@@ -56,6 +58,14 @@ of that exists yet.
 - The **Guest ID card carries the MuleSoo credit lockup, not the QR stamp** — the
   card exists to be scanned, and a second QR beside the guest's is the one a
   tired clerk scans at 6am. The QR stamp goes on the confirmation PDF instead.
+- **Email is the delivery channel. Not WhatsApp, not SMS.** This is not a
+  preference — WhatsApp *cannot* do the job. Meta refuses to deliver a free-form
+  message to anyone who has not messaged you first, and a phone call does not
+  open that window; business-initiated messages need approved templates and a
+  verified business. Email is free, instant, reaches anyone, and every guest
+  already gives Sena an address. It also means the whole stack has **no
+  subscription** in it: Supabase, Vercel, Paystack test keys and Gmail SMTP are
+  all free. The only unavoidable cost is answering the telephone.
 
 ---
 
@@ -104,7 +114,7 @@ scanner uses, and drive the result through check-in:
 
 The card is served as a **web page, not a PDF**. Headless Chrome cannot run in a
 Vercel function, and on a phone-first market a link beats an attachment nobody
-can find again. The guest gets `…/api/sena/card?v=…` on WhatsApp, opens it at the
+can find again. The guest gets `…/api/sena/card?v=…` by email, opens it at the
 desk, and shows the screen.
 
 **The URL is the credential** — the verification number is 12 characters from a
@@ -129,7 +139,7 @@ phones die at 1% — a front desk that can only scan is a front desk that stops.
 ```bash
 npm install
 
-npm test            # all three suites: schema, install, router
+npm test            # all four suites: schema, install, router, card
 npm run samples     # renders the guest ID card to docs/samples/
 ```
 
@@ -144,7 +154,7 @@ Sena's ten tools (`voice-agent/vapi-config.json`) all post to **one** endpoint.
 The router is the other side of that wire.
 
 ```
-guest dials  →  Twilio  →  Vapi (Sena speaks)
+guest dials  →  Vapi (Sena speaks)
                             │
                             │  every tool call, signed with SENA_WEBHOOK_SECRET
                             ▼
@@ -165,7 +175,7 @@ number the guest dialled — that is where multi-tenancy is actually decided.
 | `src/router.mjs` | The ten tools, and every gate that protects a booking |
 | `src/payments.mjs` | What happens when money lands. Separated from HTTP so it can be attacked by tests |
 | `src/adapters/paystack.mjs` | ZAR payments. Swapping in Chapa for Ethiopia is one file, and the router does not change |
-| `src/adapters/messenger.mjs` | WhatsApp, with an SMS fallback. A payment link that never arrives is a lost booking |
+| `src/adapters/notifier.mjs` | Email. Not WhatsApp — Meta will not deliver to a guest who only phoned you |
 | `api/sena/*.mjs` | The two Vercel endpoints. They verify secrets and delegate — nothing that matters is decided there |
 
 Copy `.env.example` to `.env.local` and fill it in before running anything that
@@ -214,7 +224,7 @@ src/
   payments.mjs                what happens when money lands
   card.mjs                    the guest ID card — QR generated without a browser
   db.mjs                      one query interface, so tests and prod run the same SQL
-  adapters/                   paystack (ZAR) · whatsapp + sms
+  adapters/                   paystack (ZAR) · email (SMTP)
 api/sena/
   tool.mjs                    every Vapi tool call arrives here
   paystack-webhook.mjs        the only thing that may confirm a booking

@@ -28,6 +28,9 @@ with h as (
   ) values (
     'Jacaranda Court Hotel',
     '+27101234567',                       -- demo line, not a real hotel
+    -- The OWNER's inbox: every booking, escalation and failed payment lands here
+    -- (§8). Point it at a real address before demoing, or the owner sees nothing:
+    --   update sena_hotels set email = 'you@example.com' where is_demo;
     'stay@jacarandacourt.example',
     '14 Jacaranda Avenue, Hatfield, Pretoria, 0083',
     'ZAR',
@@ -38,7 +41,7 @@ with h as (
     -- because it will be said out loud.
     'Free cancellation up to 48 hours before check-in, and you get a full refund. ' ||
     'Inside 48 hours, the first night is charged. No-shows are charged the first night. ' ||
-    'To cancel, call us or reply to your confirmation on WhatsApp.',
+    'To cancel, call us or reply to your confirmation email.',
     'Check-in from 2pm and check-out by 10am. Early check-in and late check-out are ' ||
     'free when the room is available, but I have to get that approved by the front desk ' ||
     'rather than promise it on the call.',
