@@ -21,10 +21,33 @@ Built by **MuleSoo Digital Services**, Pretoria.
 | 1. Supabase schema, RLS, demo seed | **Done — verified against a real Postgres** |
 | 2. Sena's system prompt + Vapi config | **Done** |
 | 3. Guest ID card (QR, single-use) | **Done — sample rendered, QR decodes** |
-| 4. Booking confirmation PDF | Not started |
+| 4. Booking confirmation PDF | Not started — gets the MuleSoo **QR credit stamp** |
 | 5. n8n workflows (call → hold → pay → deliver) | Not started |
 | 6. Paystack webhook | Not started |
 | 7. Owner setup guide | Not started |
+
+### Where we are, in one paragraph
+
+The data layer and Sena's brain exist and are tested; nothing is wired to a phone
+line yet. **The immediate next action is the owner's, not the code's:** paste
+`supabase/sena-all-in-one.sql` into the Supabase SQL editor and run it once (see
+below). After that, build step 4 onward — the confirmation PDF, then the n8n
+workflows that join the call to the database, then the Paystack webhook. The
+plan for the sales demo is a **single phone number** a hotel prospect can ring
+and hear Sena take a real booking against the fictional Jacaranda Court Hotel.
+
+### Decisions already taken (don't relitigate)
+
+- **South Africa first** → Paystack in **ZAR**, not Chapa/ETB. Chapa stays in the
+  spec as the Ethiopian swap-in. Amharic support is unchanged.
+- **The first property is fictional** (Jacaranda Court Hotel) so the system is
+  callable before a client signs. A real hotel is a different seed file — data,
+  not code.
+- **Sena's Supabase is shared with the MuleSoo website**, so every object is
+  namespaced `sena_*` and the install is tested against a co-tenant app.
+- The **Guest ID card carries the MuleSoo credit lockup, not the QR stamp** — the
+  card exists to be scanned, and a second QR beside the guest's is the one a
+  tired clerk scans at 6am. The QR stamp goes on the confirmation PDF instead.
 
 ---
 
