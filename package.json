@@ -1,20 +1,22 @@
-{
-  "name": "sena-ai-receptionist",
-  "version": "0.1.0",
-  "private": true,
-  "description": "Sena — AI voice front-desk receptionist for hotels. Built by MuleSoo Digital Services.",
-  "type": "commonjs",
-  "scripts": {
-    "samples": "node scripts/render-sample.cjs",
-    "test:db": "node scripts/test-schema.mjs"
-  },
-  "devDependencies": {
-    "@electric-sql/pglite": "^0.5.4",
-    "jsqr": "^1.4.0"
-  },
-  "dependencies": {
-    "jsbarcode": "^3.11.6",
-    "puppeteer-core": "^23.0.0",
-    "qrcode": "^1.5.4"
-  }
+﻿{
+    "name":  "sena-ai-receptionist",
+    "version":  "0.1.0",
+    "private":  true,
+    "description":  "Sena â€” AI voice front-desk receptionist for hotels. Built by MuleSoo Digital Services.",
+    "type":  "commonjs",
+    "scripts":  {
+                    "samples":  "node scripts/render-sample.cjs",
+                    "test:db":  "node scripts/test-schema.mjs",
+                    "test:install":  "node scripts/test-install.mjs",
+                    "build:install":  "node scripts/build-install.mjs"
+                },
+    "devDependencies":  {
+                            "@electric-sql/pglite":  "^0.5.4",
+                            "jsqr":  "^1.4.0"
+                        },
+    "dependencies":  {
+                         "jsbarcode":  "^3.11.6",
+                         "puppeteer-core":  "^23.0.0",
+                         "qrcode":  "^1.5.4"
+                     }
 }
