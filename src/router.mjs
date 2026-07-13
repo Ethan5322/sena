@@ -39,7 +39,15 @@ const code = (n) =>
 
 const digitsOnly = (s) => (s || '').replace(/[^\d]/g, '');
 
-export function createRouter({ db, paystack, messenger, defaultHotelId = null }) {
+export function createRouter({
+  db,
+  paystack,
+  messenger,
+  defaultHotelId = null,
+  // Where the guest's ID card is served from. Without it the WhatsApp message
+  // carries a number the guest cannot show to a scanner.
+  publicUrl = process.env.SENA_PUBLIC_URL || '',
+}) {
   // ── Session ───────────────────────────────────────────────────────────────
   // A call row exists from the moment the phone rings (CLAUDE.md §2 stage 1),
   // before we know anything about the caller. Every later row hangs off it.
@@ -404,6 +412,11 @@ export function createRouter({ db, paystack, messenger, defaultHotelId = null })
       guest,
       guest_id: guestId,
       total: toMajor(booking.total_cents),
+      // The card itself (§7). The QR lives on this page; the guest opens it at
+      // the desk and shows the screen.
+      card_url: publicUrl
+        ? `${publicUrl}/api/sena/card?v=${encodeURIComponent(guestId.verification_number)}`
+        : null,
     };
 
     const guestSend = await messenger.sendConfirmation({ to: guest.phone, email: guest.email, pkg });

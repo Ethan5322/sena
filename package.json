@@ -6,18 +6,20 @@
     "type": "commonjs",
     "scripts": {
         "samples": "node scripts/render-sample.cjs",
-        "test": "npm run test:db && npm run test:install && npm run test:router",
+        "test": "npm run test:db && npm run test:install && npm run test:router && npm run test:card",
         "test:db": "node scripts/test-schema.mjs",
         "test:install": "node scripts/test-install.mjs",
         "test:router": "node scripts/test-router.mjs",
+        "test:card": "node scripts/test-card.mjs",
         "build:install": "node scripts/build-install.mjs"
     },
     "devDependencies": {
         "@electric-sql/pglite": "^0.5.4",
-        "jsqr": "^1.4.0"
+        "pngjs": "^7.0.0"
     },
     "dependencies": {
         "jsbarcode": "^3.11.6",
+        "jsqr": "^1.4.0",
         "pg": "^8.22.0",
         "puppeteer-core": "^23.0.0",
         "qrcode": "^1.5.4"

@@ -1,0 +1,28 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+
+  "$comment": [
+    "The card and the front-desk page read the HTML template, the brand fonts and",
+    "two npm dist files off disk at request time. Vercel's bundler traces static",
+    "imports; it cannot see a path built at runtime, so those files would be left",
+    "out of the deployment and the card would 500 in production while rendering",
+    "perfectly on a laptop. includeFiles is what stops that."
+  ],
+
+  "functions": {
+    "api/**/*.mjs": {
+      "includeFiles": "{templates,assets,node_modules/jsqr/dist,node_modules/jsbarcode/dist}/**"
+    }
+  },
+
+  "headers": [
+    {
+      "source": "/api/sena/(card|desk)",
+      "headers": [
+        { "key": "Referrer-Policy", "value": "no-referrer" },
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "X-Frame-Options", "value": "DENY" }
+      ]
+    }
+  ]
+}

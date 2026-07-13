@@ -91,8 +91,13 @@ export function createMessenger({
         `Check-in: ${pkg.booking.check_in} from ${pkg.hotel.check_in_time}\n` +
         `Check-out: ${pkg.booking.check_out} by ${pkg.hotel.check_out_time}\n` +
         `Paid: ${money(pkg)}\n\n` +
-        `Guest ID: ${pkg.guest_id.guest_id_number}\n` +
-        `Show this at the front desk. It works once.`;
+        // The link IS the guest ID — it carries the QR the desk scans. Sending
+        // only the number gives the guest nothing to hold up to a scanner.
+        (pkg.card_url
+          ? `Your guest ID — open this at the front desk:\n${pkg.card_url}\n\n` +
+            `Show the QR code on that page. It works once.`
+          : `Guest ID: ${pkg.guest_id.guest_id_number}\n` +
+            `Show this at the front desk. It works once.`);
       return this.send({ channel: 'whatsapp', to, text });
     },
 
