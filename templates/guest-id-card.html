@@ -1,0 +1,241 @@
+<!doctype html>
+<!--
+  Sena — Hotel Guest ID card (CLAUDE.md §7).
+
+  Built to the same standard as the MuleSoo corporate ID (lib/corp/generateIdCard.ts):
+  CR80, 85.6 × 54 mm, rendered at 16 px/mm so it is crisp on a phone screen and on
+  a 600dpi printer. Difference: the palette is the HOTEL's, injected from
+  hotels.brand_* — a different hotel is a different card without touching this file.
+
+  THE ONE RULE OF THIS CARD: exactly one scannable code.
+  The QR is the guest's check-in token. The MuleSoo mark is therefore the compact
+  lockup, NOT the QR credit stamp — a second QR sitting beside the first is the
+  code a tired front-desk clerk scans at 6am, and the check-in fails. The full
+  MuleSoo QR stamp lives on the booking-confirmation PDF instead, where there is
+  nothing to confuse it with.
+
+  Lifecycle: valid until scanned once (§7). knock_out_guest_id() burns it.
+
+  Placeholders are filled by n8n / render-sample.cjs:
+    {{hotel_name}} {{brand_primary}} {{brand_accent}} {{brand_ink}}
+    {{guest_name}} {{nationality}} {{guest_id_number}} {{verification_number}}
+    {{room_name}} {{check_in}} {{check_out}} {{check_in_time}} {{check_out_time}}
+    {{booking_reference}} {{qr_data_uri}} {{barcode_data_uri}} {{credit_data_uri}}
+    {{font_faces}} {{hotel_logo_html}}  (an <img> if the hotel uploaded a logo,
+    otherwise its initials — the crest is never empty)
+-->
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  {{font_faces}}
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  /* CR80 at 16px/mm → 1370 × 864. */
+  html, body { width: 1370px; height: 864px; overflow: hidden; }
+
+  body {
+    position: relative;
+    background: {{brand_primary}};
+    color: {{brand_ink}};
+    font-family: 'DM Sans', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: geometricPrecision;
+  }
+
+  /* Depth, not decoration: a soft accent bloom top-left, a deep vignette bottom-right,
+     so the card reads as an object rather than a printed rectangle. */
+  .bloom {
+    position: absolute; inset: 0;
+    background:
+      radial-gradient(900px 600px at 8% -10%, {{brand_accent}}22 0%, transparent 60%),
+      radial-gradient(700px 500px at 105% 110%, #00000055 0%, transparent 60%);
+  }
+
+  /* Guilloche-style hairlines — the quiet signal that a document is official.
+     Kept under 6% opacity so they never fight the data. */
+  .weave {
+    position: absolute; inset: 0; opacity: .055;
+    background-image:
+      repeating-linear-gradient(38deg,  {{brand_ink}} 0 1px, transparent 1px 26px),
+      repeating-linear-gradient(-38deg, {{brand_ink}} 0 1px, transparent 1px 26px);
+    -webkit-mask-image: radial-gradient(ellipse at 30% 40%, black 10%, transparent 78%);
+  }
+
+  .edge { position: absolute; inset: 0; border: 3px solid {{brand_accent}}44; border-radius: 26px; }
+
+  .sheet { position: relative; height: 100%; padding: 52px 56px 44px; display: flex; flex-direction: column; }
+
+  /* ── Header ── */
+  .head { display: flex; align-items: center; gap: 22px; }
+  .crest {
+    width: 74px; height: 74px; flex: none; border-radius: 16px;
+    background: {{brand_accent}};
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'Sora'; font-weight: 800; font-size: 34px; color: {{brand_primary}};
+    letter-spacing: -1px; overflow: hidden;
+  }
+  .crest img { width: 100%; height: 100%; object-fit: contain; }
+  .titles { flex: 1; min-width: 0; }
+  .hotel {
+    font-family: 'Sora'; font-weight: 800; font-size: 40px; line-height: 1.05;
+    letter-spacing: .2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .kind {
+    font-weight: 500; font-size: 19px; letter-spacing: 6px; text-transform: uppercase;
+    color: {{brand_accent}}; margin-top: 8px;
+  }
+  .badge {
+    flex: none; align-self: flex-start;
+    font-family: 'Sora'; font-weight: 700; font-size: 17px; letter-spacing: 2.5px;
+    color: {{brand_primary}}; background: {{brand_accent}};
+    padding: 9px 18px; border-radius: 999px; text-transform: uppercase;
+  }
+
+  .rule { height: 2px; margin: 30px 0 26px; background: linear-gradient(90deg, {{brand_accent}}, {{brand_accent}}00); }
+
+  /* ── Body: data left, codes right ── */
+  .body { flex: 1; display: flex; gap: 44px; min-height: 0; }
+  .data { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+
+  .name {
+    font-family: 'Sora'; font-weight: 800; font-size: 54px; line-height: 1.08;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .nat { font-size: 23px; color: {{brand_ink}}; opacity: .68; margin-top: 8px; }
+
+  /* Sits just under the name rather than being shoved to the bottom of the
+     column — a floating void between the guest's name and their dates looks
+     like a rendering fault, not like whitespace. */
+  .grid {
+    margin-top: 40px; display: grid; grid-template-columns: 1fr 1fr; gap: 20px 30px;
+  }
+  .cell .k {
+    font-weight: 500; font-size: 15px; letter-spacing: 2.6px; text-transform: uppercase;
+    color: {{brand_accent}}; opacity: .95;
+  }
+  .cell .v {
+    font-family: 'Sora'; font-weight: 600; font-size: 27px; margin-top: 5px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .cell .v small { font-weight: 500; font-size: 19px; opacity: .72; margin-left: 6px; }
+
+  /* ── Codes ── */
+  .codes { width: 300px; flex: none; display: flex; flex-direction: column; align-items: center; }
+  .qr {
+    width: 300px; height: 300px; background: #fff; border-radius: 20px; padding: 16px;
+    box-shadow: 0 18px 40px -18px #00000088;
+  }
+  .qr img { width: 100%; height: 100%; display: block; }
+  .scanme {
+    margin-top: 14px; font-family: 'Sora'; font-weight: 700; font-size: 17px;
+    letter-spacing: 3px; text-transform: uppercase; color: {{brand_accent}};
+  }
+  .vrf {
+    margin-top: 6px; font-family: 'Sora'; font-weight: 800; font-size: 26px; letter-spacing: 2px;
+  }
+
+  /* ── Foot: barcode + single-use warning, then the MuleSoo credit on its own
+     line so it is legible rather than squeezed into a corner. ── */
+  .foot { margin-top: auto; }
+  .footrow { display: flex; align-items: flex-end; gap: 34px; }
+  .barcode { flex: none; width: 330px; }
+  .barcode img { width: 100%; height: 58px; display: block; border-radius: 4px; }
+  .barcode .cap {
+    margin-top: 7px; font-size: 14px; letter-spacing: 2.2px; text-transform: uppercase;
+    color: {{brand_ink}}; opacity: .55;
+  }
+
+  .single {
+    flex: 1; min-width: 0;
+    font-size: 17px; line-height: 1.45; opacity: .72;
+  }
+  .single b { color: {{brand_accent}}; opacity: 1; }
+
+  /* The MuleSoo mark. Compact lockup — see the header comment on why this is not
+     the QR stamp. Given its own full-width strip under a hairline: the agency
+     credit on every deliverable is only worth having if it can be read. */
+  .credit {
+    margin-top: 22px; padding-top: 16px;
+    border-top: 1px solid {{brand_ink}}22;
+    display: flex; justify-content: center;
+  }
+  .credit img { width: 430px; display: block; opacity: .95; }
+</style>
+</head>
+<body>
+  <div class="bloom"></div>
+  <div class="weave"></div>
+  <div class="edge"></div>
+
+  <div class="sheet">
+    <div class="head">
+      <div class="crest">{{hotel_logo_html}}</div>
+      <div class="titles">
+        <div class="hotel">{{hotel_name}}</div>
+        <div class="kind">Guest Identification</div>
+      </div>
+      <div class="badge">Single Use</div>
+    </div>
+
+    <div class="rule"></div>
+
+    <div class="body">
+      <div class="data">
+        <div>
+          <div class="name">{{guest_name}}</div>
+          <div class="nat">{{nationality}}</div>
+        </div>
+
+        <div class="grid">
+          <div class="cell">
+            <div class="k">Guest ID</div>
+            <div class="v">{{guest_id_number}}</div>
+          </div>
+          <div class="cell">
+            <div class="k">Booking</div>
+            <div class="v">{{booking_reference}}</div>
+          </div>
+          <div class="cell">
+            <div class="k">Check in</div>
+            <div class="v">{{check_in}} <small>from {{check_in_time}}</small></div>
+          </div>
+          <div class="cell">
+            <div class="k">Check out</div>
+            <div class="v">{{check_out}} <small>by {{check_out_time}}</small></div>
+          </div>
+          <div class="cell" style="grid-column: 1 / -1;">
+            <div class="k">Room</div>
+            <div class="v">{{room_name}}</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="codes">
+        <div class="qr"><img src="{{qr_data_uri}}" alt="" /></div>
+        <div class="scanme">Scan at reception</div>
+        <div class="vrf">{{verification_number}}</div>
+      </div>
+    </div>
+
+    <div class="foot">
+      <div class="footrow">
+        <div class="barcode">
+          <img src="{{barcode_data_uri}}" alt="" />
+          <div class="cap">Verification {{verification_number}}</div>
+        </div>
+
+        <div class="single">
+          Valid for <b>one check-in only</b>. This ID is cancelled the moment it is
+          scanned and cannot be reused or shared.
+        </div>
+      </div>
+
+      <div class="credit">
+        <img src="{{credit_data_uri}}" alt="Designed &amp; built by MuleSoo Digital Services" />
+      </div>
+    </div>
+  </div>
+</body>
+</html>
