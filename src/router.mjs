@@ -115,6 +115,13 @@ export function createRouter({
 
   async function check_availability(args, ctx) {
     const s = await session(ctx);
+
+    // Self-healing. An abandoned hold must stop counting as a live booking, and
+    // this is the moment it matters — someone is asking what is free RIGHT NOW.
+    // Doing it here rather than on a schedule means the system stays correct
+    // even if no cron ever runs, which is one less thing that can silently rot.
+    await db.query(`select sena_expire_stale_holds()`);
+
     const { rows } = await db.query(
       `select * from sena_check_availability($1, $2::date, $3::date, $4)`,
       [s.hotelId, args.check_in, args.check_out, args.guests ?? 1]
@@ -494,6 +501,102 @@ export function createRouter({
     };
   }
 
+  // Cancelling frees the room immediately — `cancelled` is excluded from
+  // sena_rooms_taken, so the night goes back on sale the moment this runs.
+  //
+  // WHAT THIS DELIBERATELY DOES NOT DO: refund anybody. Money leaving the
+  // business is a human's decision, not an AI's. Sena reads the hotel's
+  // cancellation policy VERBATIM (she is forbidden to paraphrase it), records
+  // the cancellation, and hands the owner everything they need to decide —
+  // including how many hours' notice they actually got, which is the fact the
+  // policy turns on. An AI that issues refunds is an AI that can be talked into
+  // issuing refunds.
+  async function cancel_booking(args, ctx) {
+    const s = await session(ctx);
+
+    const { rows: found } = await db.query(
+      `select b.*, g.full_name, g.email
+         from sena_bookings b
+    left join sena_guests g on g.id = b.guest_id
+        where b.hotel_id = $1
+          and ( ($2::uuid is not null and b.id = $2::uuid)
+             or ($3::text is not null and upper(b.reference) = upper($3)) )
+        limit 1`,
+      [s.hotelId, args.booking_id || null, args.reference || null]
+    );
+
+    if (!found.length) {
+      return { ok: false, reason: 'not_found', say: `No booking with that reference. Ask them to read it again.` };
+    }
+
+    const b = found[0];
+
+    // A guest already in the building is not a cancellation, it is a departure —
+    // and a completed stay cannot be un-had. Both are a human's problem.
+    if (b.status === 'checked_in' || b.status === 'completed') {
+      return {
+        ok: false,
+        reason: `already_${b.status}`,
+        say: `That guest has already checked in. Do not cancel it — escalate to a person.`,
+      };
+    }
+    if (b.status === 'cancelled') {
+      return { ok: true, already: true, reference: b.reference, say: `That booking was already cancelled.` };
+    }
+
+    const { rows: done } = await db.query(
+      `update sena_bookings
+          set status = 'cancelled', hold_expires_at = null
+        where id = $1
+        returning reference`,
+      [b.id]
+    );
+
+    // The fact the policy actually turns on. The owner should not have to work
+    // this out from two dates at 6am.
+    const hoursNotice = Math.round((new Date(b.check_in) - new Date()) / 36e5);
+
+    const { rows: paid } = await db.query(
+      `select 1 from sena_payments where booking_id = $1 and status = 'paid' limit 1`,
+      [b.id]
+    );
+
+    await notifier.alertOwner({
+      to: s.hotel.email,
+      subject: `Cancelled — ${b.reference} (${b.full_name || 'guest'})`,
+      text:
+        `BOOKING CANCELLED\n\n` +
+        `${b.full_name || 'guest'} · ${b.email || 'no email'}\n` +
+        `${b.reference} · ${b.check_in} → ${b.check_out}\n` +
+        `Notice: ${hoursNotice} hours before check-in\n` +
+        `Was paid: ${paid.length ? `YES — ${toMajor(b.total_cents)} ${s.hotel.currency}` : 'no'}\n` +
+        `Reason given: ${args.reason || 'not given'}\n\n` +
+        (paid.length
+          ? `A REFUND DECISION IS YOURS. Sena did not promise one.\nYour policy: ${s.hotel.cancellation_policy}`
+          : `Nothing was paid. The room is back on sale.`),
+    });
+
+    await db.query(
+      `insert into sena_notifications_log (booking_id, channel, recipient, template, status)
+            values ($1, $2, $3, 'owner_cancellation', 'sent')`,
+      [b.id, notifier.channel, s.hotel.email || 'unknown']
+    );
+
+    return {
+      ok: true,
+      reference: done[0].reference,
+      was_paid: paid.length > 0,
+      hours_notice: hoursNotice,
+      // Sena reads this out AS WRITTEN. She does not summarise it, and she does
+      // not tell the guest whether they will get their money back.
+      policy: s.hotel.cancellation_policy,
+      say: paid.length
+        ? `Cancelled. Read the cancellation policy back word for word. Do NOT promise a refund — ` +
+          `say the hotel will be in touch about it. If they push, escalate.`
+        : `Cancelled. Nothing was paid, so there is nothing to refund.`,
+    };
+  }
+
   async function escalate_to_human(args, ctx) {
     const s = await session(ctx);
 
@@ -540,6 +643,7 @@ export function createRouter({
     check_payment_status,
     send_confirmation_package,
     lookup_booking,
+    cancel_booking,
     escalate_to_human,
     end_call,
   };

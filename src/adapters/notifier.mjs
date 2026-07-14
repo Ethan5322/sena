@@ -177,7 +177,93 @@ export function createNotifier({ host, port, user, pass, from }) {
       });
     },
 
-    /** A call that needs a person, right now (§3). */
+    /** The day before arrival (§2 stage 10). */
+    async sendPreArrival({ to, booking, hotel }) {
+      const a = hotel.brand_accent;
+      const card = booking.verification_number
+        ? `${process.env.SENA_PUBLIC_URL || ''}/api/sena/card?v=${booking.verification_number}`
+        : null;
+
+      return mail({
+        to,
+        subject: `${hotel.name} — see you tomorrow (${booking.reference})`,
+        text:
+          `${hotel.name}\n\nWe look forward to seeing you tomorrow.\n\n` +
+          `${booking.room_name}\nCheck-in from ${String(hotel.check_in_time).slice(0, 5)}\n` +
+          `${hotel.address || ''}\n\n` +
+          (card ? `Your guest ID: ${card}\n\n` : '') +
+          `Reference: ${booking.reference}`,
+        html: wrap(
+          a,
+          `See you tomorrow`,
+          `<p>We look forward to welcoming you to <strong>${esc(hotel.name)}</strong>.</p>
+           <p>${esc(booking.room_name)}<br>
+              Check-in from <strong>${esc(String(hotel.check_in_time).slice(0, 5))}</strong><br>
+              ${esc(hotel.address || '')}</p>
+           ${card ? button(a, card, 'Open my guest ID') : ''}
+           <p style="font-size:.8rem;color:#6B7280">Reference ${esc(booking.reference)}</p>`
+        ),
+      });
+    },
+
+    /** The owner's morning list (§8). One email, not one per booking. */
+    async sendDailySummary({ to, hotel, arrivals, departures, revenue }) {
+      const a = hotel.brand_accent;
+      const line = (b) =>
+        `${b.full_name || 'guest'} · ${b.room_name} · ${b.reference}` +
+        (b.arrival_time ? ` · arriving ${String(b.arrival_time).slice(0, 5)}` : '') +
+        (b.needs_approval ? `  ** NEEDS YOUR APPROVAL **` : '');
+
+      const rows = (list, empty) =>
+        list.length
+          ? list
+              .map(
+                (b) =>
+                  `<tr><td style="padding:.5rem 0;border-bottom:1px solid #E5E7EB">
+                     <strong>${esc(b.full_name || 'guest')}</strong> · ${esc(b.room_name)}<br>
+                     <span style="color:#6B7280;font-size:.85rem">${esc(b.reference)}${
+                       b.arrival_time ? ` · arriving ${esc(String(b.arrival_time).slice(0, 5))}` : ''
+                     }</span>
+                     ${
+                       b.needs_approval
+                         ? `<br><span style="color:#B45309;font-size:.85rem"><strong>Needs your approval</strong>${
+                             b.special_requests ? ` — ${esc(b.special_requests)}` : ''
+                           }</span>`
+                         : ''
+                     }
+                   </td></tr>`
+              )
+              .join('')
+          : `<tr><td style="padding:.5rem 0;color:#9CA3AF">${esc(empty)}</td></tr>`;
+
+      return mail({
+        to,
+        subject: `${hotel.name} — ${arrivals.length} arriving, ${departures.length} leaving today`,
+        text:
+          `${hotel.name} — today\n\n` +
+          `ARRIVING (${arrivals.length})\n` +
+          (arrivals.map(line).join('\n') || 'nobody') +
+          `\n\nLEAVING (${departures.length})\n` +
+          (departures.map(line).join('\n') || 'nobody') +
+          `\n\nPaid yesterday: ${hotel.currency} ${revenue.total.toFixed(2)} across ${revenue.count} booking(s).`,
+        html: wrap(
+          a,
+          `Today at ${esc(hotel.name)}`,
+          `<p style="background:#F3F4F6;padding:.8rem;border-radius:8px;margin-bottom:1.5rem">
+             Paid yesterday: <strong>${esc(hotel.currency)} ${esc(revenue.total.toFixed(2))}</strong>
+             across ${esc(revenue.count)} booking(s).
+           </p>
+           <h2 style="font-size:.95rem;text-transform:uppercase;letter-spacing:.05em;color:#6B7280">
+             Arriving (${arrivals.length})</h2>
+           <table style="width:100%;border-collapse:collapse">${rows(arrivals, 'Nobody arriving today.')}</table>
+           <h2 style="font-size:.95rem;text-transform:uppercase;letter-spacing:.05em;color:#6B7280;margin-top:1.5rem">
+             Leaving (${departures.length})</h2>
+           <table style="width:100%;border-collapse:collapse">${rows(departures, 'Nobody leaving today.')}</table>`
+        ),
+      });
+    },
+
+    /** A call that needs a person, right now (§3). Also cancellations. */
     async alertOwner({ to, subject, text }) {
       return mail({
         to,

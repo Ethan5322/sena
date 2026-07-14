@@ -15,6 +15,16 @@
     }
   },
 
+  "$crons_comment": [
+    "06:00 UTC is 08:00 in Johannesburg — the owner's arrivals list lands before",
+    "the front desk opens, and tomorrow's guests get their reminder at a civilised",
+    "hour. Vercel's free tier allows one daily cron, which is all this needs:",
+    "expiring an abandoned hold is deliberately NOT on this schedule, because",
+    "check_availability does it on every call. The system stays correct even if",
+    "this cron never runs at all."
+  ],
+  "crons": [{ "path": "/api/sena/cron", "schedule": "0 6 * * *" }],
+
   "headers": [
     {
       "source": "/api/sena/(card|desk)",

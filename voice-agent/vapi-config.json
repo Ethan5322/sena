@@ -175,6 +175,22 @@
       {
         "type": "function",
         "function": {
+          "name": "cancel_booking",
+          "description": "Cancel a booking the guest already has. Find it first with lookup_booking and read the reference back to them before you cancel — a cancellation cannot be undone. This NEVER issues a refund: read the hotel's cancellation policy back word for word, tell the guest the hotel will be in touch about any refund, and escalate if they press you on it.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "booking_id": { "type": "string" },
+              "reference":  { "type": "string", "description": "the booking reference, if that is all you have" },
+              "reason":     { "type": "string", "description": "what the guest said, in their words" }
+            },
+            "required": ["reason"]
+          }
+        }
+      },
+      {
+        "type": "function",
+        "function": {
           "name": "escalate_to_human",
           "description": "Hand the call to a person. Use for: an upset or threatening caller, a safety issue, 10+ rooms or a corporate rate, a second failed payment, suspected fraud, a demand outside policy, or a critical field you still cannot hear clearly after two attempts. Escalating is never a failure; guessing is.",
           "parameters": {
