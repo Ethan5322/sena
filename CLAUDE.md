@@ -8,9 +8,10 @@ Version 1.2 — Project instructions for Claude Code
 
 | Decision | Value | Consequence |
 |---|---|---|
-| **First market** | **South Africa** (not Ethiopia) | Payments run on **Paystack in ZAR**, not Chapa/ETB. Chapa stays documented as the Ethiopian swap-in. Telephony numbers are South African. Data law is **POPIA**. |
+| **First market** | **South Africa** (not Ethiopia) | Payments run on **Paystack in ZAR**, not Chapa/ETB. Chapa stays documented as the Ethiopian swap-in. Data law is **POPIA**. |
 | **First property** | **Demo hotel** — "Jacaranda Court Hotel", Pretoria. **Fictional.** | The full system is built and callable now, without waiting on a client. It is the demo Ethan hands to any hotel prospect. A real hotel is a row swap, not a rebuild — see `supabase/seed-demo-hotel.sql`. |
-| **Languages** | English-first, Amharic supported | Unchanged. Sena still auto-detects from the caller's first sentence. |
+| **Voice stack** | **Self-hosted and free.** LiveKit (webRTC) + Pipecat + faster-whisper + Piper. **No Vapi, no ElevenLabs, no Twilio.** | §5's table is superseded. The guest reaches Sena through a **Call Reception button in a browser**, not a phone number — see `docs/voice-stack.md`. The only meter running is the Anthropic API. A real phone number is a documented bolt-on (LiveKit SIP), not a rebuild. |
+| **Languages** | **English only, for now.** | **This is a regression against the original spec and it is deliberate.** No self-hostable TTS can speak Amharic — not Piper, not Coqui. Whisper still *hears* Amharic, so Sena understands an Amharic speaker and answers in English. Restoring it means either an Amharic Piper voice (does not exist yet; drops in as one `.onnx` file) or paying for a voice, which reintroduces a vendor. Every §-reference to Amharic below is aspirational until then. |
 | **Agency credit** | Booking PDF + Guest ID card carry the **MuleSoo credit lockup** | House rule across every MuleSoo client deliverable. |
 
 **Multi-tenancy note:** the schema carries a `hotels` table and a `hotel_id` on every row even though §6 does not list one. MuleSoo sells this system to many hotels; without a tenant key, hotel #2 means a second database. This costs one column now and saves a rewrite later.
@@ -62,9 +63,9 @@ Sena is designed to fully automate the guest-facing list and the routine parts o
 This is the master journey map Claude Code should build the entire system around. Each stage lists the **guest experience**, the **system/data event** behind it, and the **owner-side visibility**. Every stage must be traceable to a specific automation component in §6–§9.
 
 ### Stage 1 — Awareness & First Contact
-- **Guest experience:** Guest dials the hotel's published number (same number as always — no new app or download required).
-- **System event:** Twilio receives the call, routes it to Sena's voice pipeline in under 2 seconds.
-- **Owner visibility:** Call logged in Supabase `calls` table in real time (caller number, timestamp).
+- **Guest experience:** Guest opens the hotel's reception page and clicks **Call Reception** (no app, no download, no dialling). *Originally: the guest dialled the hotel's published number. That returns when a SIP trunk is added — see §0.0.*
+- **System event:** The switchboard mints a LiveKit room and spawns Sena's bot into it; audio is flowing in under 2 seconds.
+- **Owner visibility:** Call logged in Supabase `sena_calls` in real time (room id, timestamp).
 
 ### Stage 2 — Greeting & AI Disclosure
 - **Guest experience:** Sena greets the guest by hotel name, clearly states it is an AI assistant, asks the guest's name. No confusion about who/what they're speaking to.
@@ -92,7 +93,7 @@ This is the master journey map Claude Code should build the entire system around
 - **Owner visibility:** None yet — data not committed until gate passes.
 
 ### Stage 7 — Payment
-- **Guest experience:** Sena states the total price, explains payment must be completed online to confirm the booking, and sends a secure Chapa payment link to the guest's phone via SMS/WhatsApp during the call.
+- **Guest experience:** Sena states the total price, explains payment must be completed online to confirm the booking, and **emails** a secure **Paystack** payment link during the call. *Not SMS, not WhatsApp — Meta will not deliver a free-form message to a guest who only phoned you, and a call does not open that window. See `src/adapters/notifier.mjs`.*
 - **System event:** Payment webhook listens for confirmation; room hold auto-releases if payment isn't completed within the hold window (15–30 min).
 - **Owner visibility:** Real-time payment status (pending/paid/failed) in dashboard.
 
@@ -163,11 +164,18 @@ Maps directly onto Stages 2–9 of the customer journey above. Each step is a di
 
 Designed to be swappable — Sena's logic layer (the prompt + n8n workflow) is decoupled from any single vendor.
 
+> **⚠ SUPERSEDED IN PART — see §0.0.** The voice rows below (telephony, voice
+> pipeline, TTS) describe the stack Sena was *first built on* and no longer uses.
+> They are kept because they name the paid options, and one of them is what you
+> would buy if you ever wanted a real phone number. **What is actually running is
+> the free self-hosted stack**, in the second table.
+
 | Layer | Recommended (free/cheap to start) | Alternatives |
 |---|---|---|
 | **Orchestration / workflow** | **n8n** (self-hosted, free, open-source) | Make.com, Zapier |
-| **Telephony (inbound/outbound calls)** | **Twilio** (~$1/mo per number + per-minute) | Vonage, Plivo |
-| **Voice AI pipeline (STT+LLM+TTS)** | **Vapi** (free tier: 10 concurrent calls, $10 credit) or self-hosted **Dograh AI** (open-source) | Retell AI, Bland AI, Synthflow |
+| ~~**Telephony**~~ | ~~Twilio~~ → **replaced by LiveKit webRTC** | Telnyx / Twilio, *if* a real number is wanted later |
+| ~~**Voice AI pipeline**~~ | ~~Vapi~~ → **replaced by Pipecat, self-hosted** | Vocode, Dograh AI |
+| ~~**TTS**~~ | ~~ElevenLabs~~ → **replaced by Piper, self-hosted** | Coqui XTTS (needs a GPU), ElevenLabs (paid) |
 | **LLM brain** | **Claude API** (claude-sonnet-5) via Anthropic | — |
 | **Database / calendar / booking records** | **Supabase** (free tier — already used in Jo's "ABOO HOUSE" org) | Airtable, Google Sheets |
 | **Payments (Ethiopia-ready)** | **Chapa** | Telebirr, Stripe (int'l cards) |
@@ -176,6 +184,24 @@ Designed to be swappable — Sena's logic layer (the prompt + n8n workflow) is d
 | **WhatsApp notifications** | **Meta Cloud API (WhatsApp Business)** free tier, or Twilio WhatsApp | Africa's Talking, 360dialog |
 | **SMS (payment link, fallback)** | Twilio SMS / Africa's Talking | — |
 | **Hosting** | Vercel (frontend/webhooks) + Supabase (backend) | Railway, Render |
+
+### The voice stack that is actually running
+
+Free, self-hosted, and on one small box. Full guide: `docs/voice-stack.md`.
+
+| Layer | What it is | Why |
+|---|---|---|
+| **Transport** | **LiveKit** (webRTC), self-hosted in docker | Carries audio between the guest's browser and the bot. Free. Has a SIP bridge, so a real phone number is a bolt-on rather than a rewrite. |
+| **Voice agent** | **Pipecat** (Python), one process per call | Replaced Vapi. Actively maintained, first-class LiveKit transport, ships services for Anthropic and Whisper. A crashed call takes down one conversation, not the switchboard. |
+| **STT** | **faster-whisper**, `small`, on CPU | Replaced Deepgram. Slower (~300–700ms vs ~150ms) and free. `base` is not enough: it mishears letters, and a guest spelling an email address gets a booking that never arrives. |
+| **TTS** | **Piper**, driven as a subprocess | Replaced ElevenLabs. *Faster* than it was, because there is no network hop. Coqui was rejected: the company shut down and XTTS needs a GPU for realtime. **No Amharic voice exists** — see §0.0. |
+| **Guest's phone** | **A browser.** `voice-agent/web/reception.html` | There is no number to dial. This is the trade that makes the stack free. |
+
+**The rule that made this swap cheap:** the voice layer never touches the database.
+It gets `POST /api/sena/tool` and a shared secret; every gate lives in
+`src/router.mjs`, behind that wire. Replacing Vapi, ElevenLabs and Twilio changed
+**no gate and broke no test**. Keep it that way — the next swap should be this
+boring too.
 
 ---
 
@@ -221,29 +247,33 @@ Automatic **WhatsApp message** for every completed booking: guest name/contact/n
 
 ## 10. Suggested Project File Structure (for Claude Code to scaffold)
 
+> **Superseded by what was actually built.** n8n was never used — the workflows it
+> would have held became `src/router.mjs`, which is testable, diffable, and cannot
+> be edited by accident in a browser. WhatsApp was dropped (Meta will not deliver to
+> a guest who only phoned you); email replaced it. The real tree is in `README.md`.
+
 ```
 sena-ai-receptionist/
-├── CLAUDE.md                     # this file
+├── CLAUDE.md                     # this file — the spec
 ├── voice-agent/
 │   ├── system-prompt.md          # Sena's full call-flow prompt (from §4)
-│   └── vapi-config.json
-├── n8n-workflows/
-│   ├── inbound-call-handler.json
-│   ├── availability-check.json
-│   ├── booking-confirmation.json
-│   ├── pdf-and-qr-generator.json
-│   ├── payment-webhook-chapa.json
-│   ├── whatsapp-guest-notify.json
-│   ├── whatsapp-owner-notify.json
-│   └── checkin-id-verification.json
+│   ├── agent-config.json         # the greeting, the model, the eleven tools
+│   ├── agent/                    # the Pipecat bot: whisper → claude → piper
+│   └── web/reception.html        # the guest's "phone": a button in a browser
+├── src/                          # the brain. Every gate that protects a booking
+│   ├── router.mjs                # the eleven tools (this is what n8n would have been)
+│   ├── payments.mjs  daily.mjs  card.mjs  db.mjs
+│   └── adapters/                 # paystack (ZAR) · email (SMTP)
+├── api/sena/                     # the Vercel endpoints — verify, delegate, decide nothing
 ├── supabase/
 │   ├── schema.sql                # tables from §6
-│   └── policies.sql              # RLS rules
-├── templates/
-│   ├── booking-confirmation.html # → PDF
-│   └── guest-id-card.html        # → PDF w/ QR
+│   ├── policies.sql              # RLS rules
+│   └── sena-all-in-one.sql       # generated: the one file you paste into Supabase
+├── templates/guest-id-card.html  # CR80 card w/ QR
+├── docker-compose.yml            # LiveKit + the agent
 └── docs/
-    └── owner-setup-guide.md
+    ├── voice-stack.md            # install/run/tune the free voice stack
+    └── setup-and-deploy.md       # database, money, deploy
 ```
 
 ---
@@ -259,4 +289,11 @@ sena-ai-receptionist/
 
 ---
 
-*Build order for Claude Code: (1) `supabase/schema.sql` from §6, (2) `n8n-workflows/` core booking flow, (3) `voice-agent/system-prompt.md` from §4, (4) payment webhook, (5) WhatsApp/PDF/QR pipeline last.*
+*Build order — done, in this order: (1) `supabase/schema.sql`, (2) `src/router.mjs`
+(the booking flow; n8n was never used), (3) `voice-agent/system-prompt.md`,
+(4) the Paystack webhook, (5) the QR guest ID + email delivery, (6) cancellations and
+the daily jobs, (7) the free self-hosted voice stack.*
+
+*What is left: deploy to Vercel · the owner dashboard (§2 promises owner visibility
+at six stages and none of it exists) · the booking confirmation PDF with the MuleSoo
+QR credit stamp.*

@@ -1,0 +1,265 @@
+"""
+Sena — one call.
+
+This is the process that replaced Vapi. It joins a LiveKit room as a participant
+and runs the loop that used to be somebody's platform:
+
+    guest's audio  →  faster-whisper  →  Claude (+ the eleven tools)  →  Piper  →  guest's ears
+
+Everything here is either open source or already paid for. There is no per-minute
+voice bill, no TTS bill, and no telephony bill — the only meter running is the
+Anthropic API, which was always running.
+
+One process per call, spawned by server.py and dead when the room empties. That
+is deliberate: a crashed call takes down one guest's conversation, not the hotel's
+switchboard, and there is no long-lived state to corrupt between calls.
+
+WHERE A REAL PHONE NUMBER PLUGS IN
+----------------------------------
+Nothing below knows it is talking to a browser. LiveKit has a SIP bridge, so a
+real inbound number is added by pointing a SIP trunk (Telnyx, Twilio, Vonage) at
+LiveKit and having it drop the caller into a room exactly like the one this bot
+joins. This file does not change. What changes:
+
+  * the room's metadata carries the DIALLED number instead of a hotel id, and
+    src/router.mjs resolves the hotel from it — that path is still there and
+    still works (see resolveHotelId).
+  * escalate_to_human becomes a real transfer instead of "a person will call
+    you back".
+
+That is the whole migration, and it is why we are not building for it today.
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import logging
+import sys
+
+from pipecat.adapters.schemas.function_schema import FunctionSchema
+from pipecat.adapters.schemas.tools_schema import ToolsSchema
+from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.frames.frames import EndFrame, TTSSpeakFrame
+from pipecat.pipeline.pipeline import Pipeline
+from pipecat.pipeline.runner import PipelineRunner
+from pipecat.pipeline.task import PipelineParams, PipelineTask
+from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
+from pipecat.services.anthropic.llm import AnthropicLLMService
+from pipecat.services.whisper.stt import WhisperSTTService
+from pipecat.transports.services.livekit import LiveKitParams, LiveKitTransport
+
+from config import AgentConfig, Settings, render_system_prompt
+from piper_tts import PiperTTSService
+from sena_client import SenaClient
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)-5s %(name)s: %(message)s",
+)
+log = logging.getLogger("sena.bot")
+
+
+async def run_bot(room: str, hotel_id: str, token: str) -> None:
+    settings = Settings.from_env()
+    cfg = AgentConfig.load()
+    client = SenaClient(settings.sena_api_url, settings.sena_secret)
+
+    # The identity of this call, as far as the database is concerned. The room
+    # name IS the call id: it is unique, it is what LiveKit already knows, and it
+    # is what you grep for when a guest complains.
+    call = {"id": room, "hotel_id": hotel_id, "dialed_number": None, "from_number": None}
+
+    # ── Which hotel, and what may Sena say about it ──────────────────────────
+    # Fetched, never guessed. Every rate, time and policy Sena quotes comes from
+    # the hotel's own row — CLAUDE.md's rule is that if it did not come from the
+    # data, she does not know it.
+    context_data = await client.hotel_context(hotel_id)
+    system_prompt = render_system_prompt(context_data["prompt_vars"])
+    greeting = cfg.first_message.replace(
+        "{{hotel_name}}", context_data["prompt_vars"]["hotel_name"]
+    )
+    escalation_phone = context_data.get("escalation_phone")
+
+    # ── The pipeline ────────────────────────────────────────────────────────
+    transport = LiveKitTransport(
+        url=settings.livekit_url,
+        token=token,
+        room_name=room,
+        params=LiveKitParams(
+            audio_in_enabled=True,
+            audio_out_enabled=True,
+            # Silero decides when the guest has stopped talking. Without a VAD,
+            # Whisper transcribes the pauses too and Sena interrupts people.
+            vad_analyzer=SileroVADAnalyzer(),
+        ),
+    )
+
+    # Local Whisper. 'small' is the floor: 'base' mishears letters, and a guest
+    # spelling out an email address into a model that hears "m" as "n" produces a
+    # booking that never reaches them.
+    stt = WhisperSTTService(
+        model=settings.whisper_model or cfg.stt_model,
+        language=cfg.stt_language,
+    )
+
+    tts = PiperTTSService(
+        voice_model=settings.piper_voice,
+        piper_binary=settings.piper_binary,
+    )
+
+    llm = AnthropicLLMService(
+        api_key=settings.anthropic_api_key,
+        model=cfg.model,
+        params=AnthropicLLMService.InputParams(
+            temperature=cfg.temperature,
+            max_tokens=cfg.max_tokens,
+        ),
+    )
+
+    # ── The eleven tools ────────────────────────────────────────────────────
+    # Registered from agent-config.json, so the names the model can call and the
+    # names src/router.mjs implements come from ONE list. A tool the model knows
+    # about but the router does not is the worst failure in the system: Sena
+    # narrates a success that never happened, to a real guest, on a real call.
+    tools = ToolsSchema(
+        standard_tools=[
+            FunctionSchema(
+                name=t["name"],
+                description=t["description"],
+                properties=t["input_schema"].get("properties", {}),
+                required=t["input_schema"].get("required", []),
+            )
+            for t in cfg.tools
+        ]
+    )
+
+    # end_call is the one tool with a side effect on the pipeline itself, so the
+    # bot has to watch for it rather than just forwarding it to the router.
+    hang_up = asyncio.Event()
+
+    def make_handler(name: str):
+        async def handler(params):
+            args = params.arguments or {}
+            result = await client.call_tool(name, args, call)
+
+            # There is no line to transfer to on a browser call. Rather than let
+            # Sena silently drop an upset guest, hand her the number and let her
+            # say it out loud. The owner has already been emailed by the router.
+            if name == "escalate_to_human":
+                result.setdefault("transfer_to", escalation_phone)
+                result["say"] = (
+                    "There is no way to transfer this browser call. Give the guest "
+                    f"this number — {result.get('transfer_to')} — tell them a person "
+                    "will call them back, and end the call."
+                )
+
+            await params.result_callback(result)
+
+            if name == "end_call":
+                hang_up.set()
+
+        return handler
+
+    for name in cfg.tool_names:
+        llm.register_function(name, make_handler(name))
+
+    # ── Context ─────────────────────────────────────────────────────────────
+    # The greeting goes in as an assistant turn even though the model did not
+    # generate it (see below), because a model that does not know it already said
+    # hello will say hello again.
+    context = OpenAILLMContext(
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "assistant", "content": greeting},
+        ],
+        tools=tools,
+    )
+    aggregator = llm.create_context_aggregator(context)
+
+    pipeline = Pipeline(
+        [
+            transport.input(),
+            stt,
+            aggregator.user(),
+            llm,
+            tts,
+            transport.output(),
+            aggregator.assistant(),
+        ]
+    )
+
+    task = PipelineTask(
+        pipeline,
+        params=PipelineParams(allow_interruptions=True),
+    )
+
+    @transport.event_handler("on_first_participant_joined")
+    async def _greet(transport, participant):  # noqa: ANN001
+        # THE DISCLOSURE IS SPOKEN, NOT GENERATED.
+        #
+        # CLAUDE.md §0 requires Sena to say she is an AI within ten seconds, and
+        # POPIA requires the recording consent in the same breath. If we asked the
+        # model to produce that sentence, it would paraphrase it — sometimes
+        # beautifully, sometimes without the word "AI" in it, and once in a
+        # thousand calls not at all. So we say it verbatim, as audio, before the
+        # model has any say in the matter.
+        log.info("guest joined %s — greeting", room)
+        await task.queue_frames([TTSSpeakFrame(greeting)])
+
+    @transport.event_handler("on_participant_left")
+    async def _left(transport, participant, reason):  # noqa: ANN001
+        log.info("guest left %s (%s)", room, reason)
+        await task.queue_frames([EndFrame()])
+
+    async def _watch_hangup() -> None:
+        """end_call fired, or the call ran past its limit."""
+        try:
+            await asyncio.wait_for(hang_up.wait(), timeout=cfg.max_duration_seconds)
+            log.info("end_call — hanging up %s", room)
+        except asyncio.TimeoutError:
+            # 15 minutes. A booking call runs 4–6; anything at 15 has gone wrong
+            # and should have been with a human already.
+            log.warning("%s hit max duration — hanging up", room)
+        await task.queue_frames([EndFrame()])
+
+    runner = PipelineRunner()
+    watcher = asyncio.create_task(_watch_hangup())
+
+    try:
+        await runner.run(task)
+    finally:
+        watcher.cancel()
+
+        # The transcript, for quality review and disputes (CLAUDE.md §9). Consent
+        # was stated in the greeting — which is the greeting we just spoke,
+        # verbatim, which is why that matters.
+        transcript = "\n".join(
+            f"{m.get('role')}: {m.get('content')}"
+            for m in context.get_messages()
+            if m.get("role") in ("user", "assistant") and isinstance(m.get("content"), str)
+        )
+        await client.call_ended(call, transcript, outcome=None)
+        await client.aclose()
+        log.info("call %s finished", room)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Sena — one voice call")
+    parser.add_argument("--room", required=True)
+    parser.add_argument("--hotel-id", required=True)
+    parser.add_argument("--token", required=True, help="LiveKit token for the BOT, not the guest")
+    args = parser.parse_args()
+
+    try:
+        asyncio.run(run_bot(args.room, args.hotel_id, args.token))
+    except KeyboardInterrupt:
+        pass
+    except Exception:
+        log.exception("bot died")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

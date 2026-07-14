@@ -1,0 +1,77 @@
+// ============================================================================
+// GET /api/sena/hotel?hotel_id=… — the variables that fill Sena's system prompt.
+//
+// voice-agent/system-prompt.md is written with {{hotel_name}}, {{check_in_time}},
+// {{cancellation_policy}} and the rest left as holes. Somebody has to fill them
+// before the bot opens its mouth, and that somebody is the agent — it calls this
+// once, at the start of a call, and renders the prompt.
+//
+// WHY THE AGENT DOES NOT JUST READ THE DATABASE: it is the same rule that kept
+// Vapi away from Postgres. The voice layer is the least trusted thing in the
+// system — it runs a language model that a caller is actively trying to talk
+// into things. It gets an HTTP endpoint that returns seven strings, not a
+// connection string. If the agent host is ever compromised, the blast radius is
+// a hotel's check-in time, not its guest list.
+//
+// Behind the same secret as the tool endpoint, for the same reason.
+// ============================================================================
+
+import { createPgDb } from '../../src/db.mjs';
+import { secretOk } from './tool.mjs';
+
+let db;
+function database() {
+  if (!db) db = createPgDb(process.env.DATABASE_URL);
+  return db;
+}
+
+export default async function handler(req, res) {
+  if (!secretOk(req.headers['x-sena-secret'])) {
+    return res.status(401).json({ error: 'unauthorised' });
+  }
+
+  const hotelId = req.query?.hotel_id || process.env.SENA_DEFAULT_HOTEL_ID;
+  if (!hotelId) return res.status(400).json({ error: 'no hotel_id' });
+
+  try {
+    const { rows } = await database().query(
+      `select id, name, address, currency, check_in_time, check_out_time,
+              hold_minutes, cancellation_policy, early_late_policy,
+              escalation_phone
+         from sena_hotels
+        where id = $1`,
+      [hotelId]
+    );
+
+    if (!rows.length) return res.status(404).json({ error: 'unknown hotel' });
+    const h = rows[0];
+
+    return res.status(200).json({
+      hotel_id: h.id,
+      // Exactly the {{...}} holes in system-prompt.md, and nothing else. If you
+      // add a placeholder there, add it here, or Sena will read the guest the
+      // literal string "{{early_late_policy}}" down the phone.
+      prompt_vars: {
+        hotel_name: h.name,
+        currency: h.currency,
+        check_in_time: String(h.check_in_time).slice(0, 5),
+        check_out_time: String(h.check_out_time).slice(0, 5),
+        hold_minutes: String(h.hold_minutes),
+        cancellation_policy: h.cancellation_policy,
+        // Nullable in the schema. Left as null it renders the four characters
+        // "null" into the prompt, and Sena quotes them to a guest as policy.
+        early_late_policy:
+          h.early_late_policy || 'The hotel has no published early/late policy — ask the owner.',
+        // Sena has no clock. Without this she cannot resolve "tomorrow", and a
+        // guest who says "next Friday" gets a booking in the wrong week.
+        today: new Date().toISOString().slice(0, 10),
+      },
+      // Not a prompt variable — the agent needs it when escalate_to_human fires
+      // and there is no line to transfer to.
+      escalation_phone: h.escalation_phone,
+    });
+  } catch (err) {
+    console.error('[sena] hotel context failed:', err);
+    return res.status(500).json({ error: 'internal error' });
+  }
+}

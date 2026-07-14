@@ -1,0 +1,39 @@
+# LiveKit — the webRTC server. This is what replaced Twilio.
+#
+# It carries audio between the guest's browser and Sena's bot. It is open source,
+# it runs in one container, and it costs nothing. What it does NOT do is answer a
+# telephone: there is no number to dial here, only a web page to open. Adding a
+# real number later means pointing a SIP trunk at LiveKit's SIP bridge — see the
+# note in voice-agent/agent/bot.py.
+
+port: 7880
+
+rtc:
+  # The media ports docker-compose publishes. A small range on purpose: every
+  # port here has to be opened on the firewall of whatever server this lands on,
+  # and 60 concurrent calls is far past the point where a hotel needs a bigger
+  # answer than "one small box".
+  port_range_start: 50000
+  port_range_end: 50060
+  # TCP fallback. Some corporate and hotel networks block UDP outright, and a
+  # guest calling FROM a hotel lobby wifi is not a hypothetical here.
+  tcp_port: 7881
+  use_external_ip: false
+  # ^ false is correct for localhost. On a real server set this to true (or set
+  #   node_ip) so LiveKit advertises the public address — otherwise the browser
+  #   connects, the call "starts", and neither side hears a thing.
+
+# DEVELOPMENT KEYS. These are the values LiveKit's own docs use, they are in this
+# repo, and they are therefore public. Before this faces a guest, generate real
+# ones and put them in .env.local:
+#
+#     docker run --rm livekit/livekit-server generate-keys
+#
+# The secret must be at least 32 characters. Anyone holding this pair can mint a
+# token and join any room on this server — including a call in progress.
+keys:
+  devkey: secret-at-least-32-characters-long
+
+logging:
+  level: info
+  json: false

@@ -321,8 +321,10 @@ ok(esc.ok && esc.transfer_to === '+27688529333', `escalation returns the hotel's
 ok(sent.some((s) => s.kind === 'alert'), 'and the owner is emailed immediately');
 
 // ── A tool that does not exist ──────────────────────────────────────────────
-// The worst failure mode in the whole system: Vapi calls a tool we never built,
-// we quietly return nothing, and Sena narrates a success to a real guest.
+// The worst failure mode in the whole system: the model calls a tool we never
+// built, we quietly return nothing, and Sena narrates a success to a real guest.
+// scripts/test-tools.mjs stops the two lists drifting apart in the first place;
+// this is what happens if one ever slips through anyway.
 let threw = false;
 try {
   await router.handle('refund_everything', {}, newCall());

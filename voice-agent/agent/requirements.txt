@@ -1,0 +1,32 @@
+# Sena's voice agent. Everything here is free and runs on one small box.
+#
+# PINNED ON PURPOSE. Pipecat is young and moves fast — it has relocated TTSService
+# between releases, and its function-calling signature changed under it. An
+# unpinned install means a voice agent that worked on Tuesday and does not start
+# on Thursday, and you find out when a guest is on the line. Bump these
+# deliberately, and make a test call afterwards — `npm test` cannot catch this,
+# because it does not have ears.
+
+# The framework that replaced Vapi. Extras pull in the three services we use:
+#   livekit  → webRTC transport
+#   whisper  → faster-whisper, local STT
+#   silero   → voice activity detection (knowing when the guest stopped talking)
+#   anthropic→ Claude, the brain
+pipecat-ai[livekit,whisper,silero,anthropic]~=0.0.60
+
+# Minting LiveKit tokens for the guest and the bot (server.py).
+livekit-api~=0.8
+
+# The switchboard.
+fastapi~=0.115
+uvicorn[standard]~=0.32
+
+# Talking to the Node router. The agent's ONLY route to the database — it has no
+# Postgres driver here, and that is deliberate: see sena_client.py.
+httpx~=0.27
+
+# NOT HERE, ON PURPOSE:
+#   elevenlabs   — replaced by Piper, which we drive as a subprocess (piper_tts.py)
+#   twilio       — replaced by LiveKit webRTC; a phone number is a later decision
+#   vapi         — replaced by this directory
+#   psycopg      — the voice layer does not get a database connection. Ever.

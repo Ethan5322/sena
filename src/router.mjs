@@ -1,9 +1,15 @@
 // ============================================================================
 // Sena — the tool router
 //
-// Sena's ten tools (voice-agent/vapi-config.json) all post to one endpoint.
-// This is the other side of that wire: it routes on the tool name, talks to
-// Postgres, and hands back a result the model can say out loud.
+// Sena's eleven tools (voice-agent/tools.json) all post to one endpoint. This is
+// the other side of that wire: it routes on the tool name, talks to Postgres,
+// and hands back a result the model can say out loud.
+//
+// NOTHING HERE KNOWS WHAT A VOICE IS. The router does not know whether Sena is
+// speaking over webRTC, over a phone line, or into a test harness — it takes a
+// tool name and a bag of arguments over HTTP. That is why swapping the entire
+// voice stack (Vapi → Pipecat, ElevenLabs → Piper, Twilio → LiveKit) did not
+// change a single gate in this file, and why the next swap will not either.
 //
 // THE ROUTER IS THE LAST LINE OF DEFENCE.
 //
@@ -54,8 +60,19 @@ export function createRouter({
   // A call row exists from the moment the phone rings (CLAUDE.md §2 stage 1),
   // before we know anything about the caller. Every later row hangs off it.
 
-  async function resolveHotelId(dialedNumber) {
-    const dialed = digitsOnly(dialedNumber);
+  // WHICH HOTEL IS SENA ANSWERING FOR? Multi-tenancy is decided here and nowhere
+  // else, and there are two ways to know, one per transport:
+  //
+  //   webRTC (today)     the guest opened a hotel's own reception page, so the
+  //                      SERVER put the hotel id in the room it minted a token
+  //                      for. The browser never chooses it.
+  //   telephony (later)  the guest dialled a number, and that number belongs to
+  //                      exactly one hotel. Kept working so a SIP trunk can be
+  //                      bolted on without touching any of this.
+  async function resolveHotelId(ctx) {
+    if (ctx.hotelId) return ctx.hotelId;
+
+    const dialed = digitsOnly(ctx.dialedNumber);
     if (dialed) {
       // Match on digits, so +27 10 123 4567 and +27101234567 are the same hotel.
       const { rows } = await db.query(
@@ -68,8 +85,9 @@ export function createRouter({
     }
     if (defaultHotelId) return defaultHotelId;
     throw new ToolError(
-      `no hotel is mapped to the dialled number ${dialedNumber || '(none)'} — ` +
-        `set SENA_DEFAULT_HOTEL_ID or fix sena_hotels.phone`
+      `no hotel: neither a room hotel_id nor a dialled number ` +
+        `(${ctx.dialedNumber || 'none'}) resolved one — set SENA_DEFAULT_HOTEL_ID ` +
+        `or fix sena_hotels.phone`
     );
   }
 
@@ -77,7 +95,7 @@ export function createRouter({
   async function session(ctx) {
     if (ctx._session) return ctx._session;
 
-    const hotelId = await resolveHotelId(ctx.dialedNumber);
+    const hotelId = await resolveHotelId(ctx);
     const { rows } = await db.query(
       `insert into sena_calls (hotel_id, provider_call_id, from_number)
             values ($1, $2, $3)
@@ -618,7 +636,14 @@ export function createRouter({
         `${args.summary}`,
     });
 
-    // Vapi performs the transfer; the router only says where to.
+    // The voice layer performs the handover; the router only says where to.
+    //
+    // ON webRTC THERE IS NOWHERE TO TRANSFER TO. A browser call cannot be patched
+    // through to a human's phone without a telephony leg, so today the agent says
+    // the number out loud, tells the guest a person will call them back, and the
+    // owner's email above is what actually gets them helped. When a SIP trunk is
+    // added (see voice-agent/agent/bot.py), this same field becomes a real
+    // transfer and nothing in the router changes.
     return { ok: true, transfer_to: s.hotel.escalation_phone };
   }
 
@@ -652,13 +677,13 @@ export function createRouter({
     /** Run one tool call. Throws ToolError for anything Sena should escalate on. */
     async handle(name, args, ctx) {
       const fn = tools[name];
-      // A tool Vapi knows about but we do not is the worst possible failure: the
-      // model would narrate a success that never happened. Fail loudly.
+      // A tool the model knows about but we do not is the worst possible failure:
+      // Sena would narrate a success that never happened. Fail loudly.
       if (!fn) throw new ToolError(`unknown tool: ${name}`);
       return fn(args ?? {}, ctx);
     },
 
-    /** Vapi's end-of-call report. Consent to record is stated in the greeting (§9). */
+    /** Written when the call ends. Consent to record is stated in the greeting (§9). */
     async saveTranscript({ providerCallId, transcript, outcome }) {
       await db.query(
         `update sena_calls

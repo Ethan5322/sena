@@ -1,10 +1,14 @@
 # Sena — AI Front Desk Receptionist
 
-An autonomous AI voice receptionist for hotels. A guest phones the hotel's usual
-number; Sena answers, says plainly that she is an AI, works in English or
-Amharic, checks live availability, quotes real rates, takes the guest's details,
-sends a payment link during the call, and issues a booking confirmation plus a
-single-use QR guest ID. Anything she is not sure of, she hands to a human.
+An autonomous AI voice receptionist for hotels. A guest clicks **Call Reception**;
+Sena answers, says plainly that she is an AI, checks live availability, quotes real
+rates, takes the guest's details, sends a payment link during the call, and issues a
+booking confirmation plus a single-use QR guest ID. Anything she is not sure of, she
+hands to a human.
+
+**The whole voice stack is self-hosted and free** — LiveKit carries the audio,
+faster-whisper listens, Piper speaks, and Claude thinks. No Vapi, no ElevenLabs, no
+Twilio. The only meter running is the Anthropic API.
 
 Built by **MuleSoo Digital Services**, Pretoria.
 
@@ -19,40 +23,52 @@ Built by **MuleSoo Digital Services**, Pretoria.
 | Build step | State |
 |---|---|
 | 1. Supabase schema, RLS, demo seed | **Done — installed and live in Supabase** |
-| 2. Sena's system prompt + Vapi config | **Done** |
+| 2. Sena's system prompt + agent config | **Done** |
 | 3. Guest ID card (QR, single-use) | **Done — sample rendered, QR decodes** |
 | 4. Tool router (call → hold → pay → confirm) | **Done — every gate attacked** |
 | 5. Paystack webhook | **Done — signature, underpayment, idempotency** |
 | 6. Guest ID delivery + front-desk scanner | **Done — the QR round trip is proven** |
 | 7. Email delivery (payment link + guest ID) | **Done — no WhatsApp, no SMS, no subscription** |
-| 8. Deploy to Vercel + a phone number | Not started — this is what makes it ring |
-| 9. Owner dashboard | Not started — §2 promises owner visibility at six stages |
-| 10. Cancellations | Not started — `cancelled` exists in the DB and nothing sets it |
-| 11. Scheduled jobs (expire holds, arrivals, post-stay) | Not started |
-| 12. Booking confirmation PDF | Not started — gets the MuleSoo **QR credit stamp** |
+| 8. Cancellations | **Done — frees the room, never refunds** |
+| 9. Scheduled jobs (expire holds, arrivals, post-stay) | **Done — idempotent against the ledger** |
+| 10. Free self-hosted voice stack | **Written, not yet heard** — see below |
+| 11. Deploy to Vercel | Not started |
+| 12. Owner dashboard | Not started — §2 promises owner visibility at six stages |
+| 13. Booking confirmation PDF | Not started — gets the MuleSoo **QR credit stamp** |
 
-**Four suites, all against a real Postgres.** `npm test`. Setup:
-[docs/setup-and-deploy.md](docs/setup-and-deploy.md).
+**Five suites, 102 assertions, all against a real Postgres.** `npm test`. Setup:
+[docs/setup-and-deploy.md](docs/setup-and-deploy.md) ·
+[docs/voice-stack.md](docs/voice-stack.md).
 
 ### Where we are, in one paragraph
 
-The database is live in Supabase and the whole guest journey now exists as tested
-code: Sena takes the call, holds a room against a race, refuses to save a guest
-she has not double-confirmed, sends a Paystack link, refuses to confirm until the
-money lands, then issues a QR guest ID that a clerk can scan — once, and only
-once. **What is missing is not logic. It is a phone number.** Nothing is deployed,
-so nobody can ring it. Next: deploy `api/` to Vercel, point `vapi-config.json` at
-it, buy a South African number. After that, the owner dashboard — CLAUDE.md §2
-promises the owner sees bookings, payments and check-ins in real time, and none
-of that exists yet.
+The database is live in Supabase and the whole guest journey exists as tested code:
+Sena takes the call, holds a room against a race, refuses to save a guest she has
+not double-confirmed, sends a Paystack link, refuses to confirm until the money
+lands, then issues a QR guest ID that a clerk can scan — once, and only once. The
+voice she takes the call *with* has just been rebuilt: Vapi, ElevenLabs and Twilio
+are gone, replaced by Pipecat, Piper and LiveKit running in docker on your own box.
+**That stack is written and not yet heard.** The Node half is driven and passing;
+nobody has spoken to the Python half, because it needs Docker and a microphone.
+The next thing that happens is somebody clicks *Call Reception* and listens.
 
 ### Decisions already taken (don't relitigate)
 
 - **South Africa first** → Paystack in **ZAR**, not Chapa/ETB. Chapa stays in the
-  spec as the Ethiopian swap-in. Amharic support is unchanged.
+  spec as the Ethiopian swap-in.
 - **The first property is fictional** (Jacaranda Court Hotel) so the system is
   callable before a client signs. A real hotel is a different seed file — data,
   not code.
+- **The voice stack is self-hosted, and the browser is the phone.** Vapi,
+  ElevenLabs and Twilio are gone; Pipecat, Piper, faster-whisper and LiveKit run in
+  docker on one box. This costs a phone number, which we do not need to prove the
+  product, and buys a stack with no per-minute bill in it. The seam for a real
+  number (LiveKit SIP) is left open and documented, not built.
+- **Amharic is deferred, and that is a real loss, not a rewording.** No
+  self-hostable TTS can speak it — not Piper, not Coqui. Whisper still hears it, so
+  Sena understands an Amharic speaker and answers in English. The spec asked for
+  bilingual and the free stack cannot deliver it; when an Amharic voice exists it
+  is one `.onnx` file away.
 - **Sena's Supabase is shared with the MuleSoo website**, so every object is
   namespaced `sena_*` and the install is tested against a co-tenant app.
 - The **Guest ID card carries the MuleSoo credit lockup, not the QR stamp** — the
@@ -64,8 +80,8 @@ of that exists yet.
   open that window; business-initiated messages need approved templates and a
   verified business. Email is free, instant, reaches anyone, and every guest
   already gives Sena an address. It also means the whole stack has **no
-  subscription** in it: Supabase, Vercel, Paystack test keys and Gmail SMTP are
-  all free. The only unavoidable cost is answering the telephone.
+  subscription** in it: Supabase, Vercel, Paystack test keys, Gmail SMTP, LiveKit,
+  Whisper and Piper are all free. **The only meter still running is Anthropic.**
 
 ---
 
@@ -108,6 +124,17 @@ scanner uses, and drive the result through check-in:
 9. **A second scan of the same card is refused.** Card → QR → scanner → database,
    proven end to end.
 
+**Between the model and the router** (`npm run test:tools`) — Sena's tools are
+declared in one file and implemented in another, in different languages. Nothing but
+this test makes them agree:
+
+10. **The two lists are one list, in both directions.** A tool the router renames
+    and the config forgets is a tool Sena keeps calling into the void — and if it
+    happens on `send_confirmation_package`, the hotel has taken the money and
+    delivered nothing. The same test refuses to let the greeting lose the words "AI"
+    or "recorded", because both are legal requirements (§0, POPIA) and both live in
+    a string that is very easy to edit.
+
 ---
 
 ## The guest ID, and the front desk
@@ -134,12 +161,56 @@ phones die at 1% — a front desk that can only scan is a front desk that stops.
 
 ---
 
+## The voice — free, self-hosted, nothing phoning home
+
+| Was | Is now |
+|---|---|
+| Vapi — the voice agent platform | **Pipecat**, a Python process you run |
+| ElevenLabs — text to speech | **Piper**, a binary on your box |
+| Twilio — telephony | **LiveKit**, webRTC in the browser |
+| Deepgram — speech to text | **faster-whisper**, on your CPU |
+| Claude — the brain | **Claude**, still the brain |
+
+Three things follow from this, and two of them are costs.
+
+**A phone number is gone.** Guests reach Sena by opening a page and clicking a
+button. That is the trade, and it is the right one for now: a South African number
+needs a regulatory bundle that takes days to weeks, and you should not wait on a
+telco to learn whether your receptionist can take a booking. LiveKit has a SIP
+bridge, so [adding a real number](docs/voice-stack.md#later-a-real-phone-number) is
+a bolt-on — `bot.py` does not change, and `resolveHotelId()` still resolves a hotel
+from a dialled number.
+
+**Amharic is gone, for now.** Piper has no Amharic voice and neither does Coqui.
+Whisper still *hears* it, so Sena will understand an Amharic speaker and reply in
+English. CLAUDE.md §0 called Amharic a requirement; the free stack cannot meet it,
+and that is written down rather than quietly dropped.
+
+**It is slower.** Deepgram transcribed in ~150 ms; local Whisper takes 300–700 ms on
+a CPU. Piper wins some back by not being across a network. Net, a few hundred
+milliseconds worse per turn — noticeable, survivable, and erased by a GPU.
+
+---
+
 ## Run it
 
 ```bash
 npm install
+npm test            # five suites: schema, install, router, card, tools
+```
 
-npm test            # all four suites: schema, install, router, card
+To actually talk to her, two terminals:
+
+```bash
+npm run dev         # the brain:  router, gates, database   → :3000
+npm run voice       # the voice:  LiveKit + Whisper + Piper → :8080
+```
+
+Then open **http://localhost:8080** and click *Call Reception*. Full guide,
+including macOS/Windows/Linux install and what to do when the call connects but
+nobody can hear anything: **[docs/voice-stack.md](docs/voice-stack.md)**.
+
+```bash
 npm run samples     # renders the guest ID card to docs/samples/
 ```
 
@@ -150,11 +221,15 @@ Chrome). Set `CHROME_PATH` if it is somewhere unusual.
 
 ## The booking path
 
-Sena's ten tools (`voice-agent/vapi-config.json`) all post to **one** endpoint.
+Sena's eleven tools (`voice-agent/agent-config.json`) all post to **one** endpoint.
 The router is the other side of that wire.
 
 ```
-guest dials  →  Vapi (Sena speaks)
+guest clicks "Call Reception"
+        │
+        ▼
+  LiveKit (webRTC)  ◄──►  Pipecat bot        ← voice-agent/agent/
+        audio, both ways    whisper → claude → piper
                             │
                             │  every tool call, signed with SENA_WEBHOOK_SECRET
                             ▼
@@ -167,16 +242,23 @@ guest dials  →  Vapi (Sena speaks)
                    POST /api/sena/paystack-webhook   ← src/payments.mjs
 ```
 
-The router never lets Vapi near the database. It resolves *which hotel* from the
-number the guest dialled — that is where multi-tenancy is actually decided.
+**The router never lets the voice layer near the database.** That was the rule when
+the voice layer was Vapi and it is the rule now that we own it: the bot runs a
+language model a caller is actively trying to talk into things, so it gets an HTTP
+endpoint and a shared secret, not a connection string.
+
+It is also why swapping the entire voice stack changed **no gate in `src/router.mjs`
+and broke no test**. The router takes a tool name and a bag of arguments. It does
+not know what a microphone is.
 
 | File | What it holds |
 |---|---|
-| `src/router.mjs` | The ten tools, and every gate that protects a booking |
+| `src/router.mjs` | The eleven tools, and every gate that protects a booking |
 | `src/payments.mjs` | What happens when money lands. Separated from HTTP so it can be attacked by tests |
+| `src/daily.mjs` | The work nobody is on the phone for — reminders, the owner's morning list |
 | `src/adapters/paystack.mjs` | ZAR payments. Swapping in Chapa for Ethiopia is one file, and the router does not change |
 | `src/adapters/notifier.mjs` | Email. Not WhatsApp — Meta will not deliver to a guest who only phoned you |
-| `api/sena/*.mjs` | The two Vercel endpoints. They verify secrets and delegate — nothing that matters is decided there |
+| `api/sena/*.mjs` | The Vercel endpoints. They verify secrets and delegate — nothing that matters is decided there |
 
 Copy `.env.example` to `.env.local` and fill it in before running anything that
 touches the network.
@@ -220,28 +302,47 @@ supabase/
   seed-demo-hotel.sql         Jacaranda Court Hotel (fictional)
   sena-uninstall.sql          removes only sena_*, leaves the co-tenant standing
 src/
-  router.mjs                  the ten tools, and the gates that protect a booking
+  router.mjs                  the eleven tools, and the gates that protect a booking
   payments.mjs                what happens when money lands
+  daily.mjs                   the work nobody is on the phone for
   card.mjs                    the guest ID card — QR generated without a browser
   db.mjs                      one query interface, so tests and prod run the same SQL
   adapters/                   paystack (ZAR) · email (SMTP)
 api/sena/
-  tool.mjs                    every Vapi tool call arrives here
+  tool.mjs                    every tool call arrives here. The contract is ours now
+  hotel.mjs                   the prompt variables — the agent's only route to the DB
   paystack-webhook.mjs        the only thing that may confirm a booking
   card.mjs                    the guest's ID card, at an unguessable URL
   desk.mjs                    the front desk: scan the QR, check the guest in
+  cron.mjs                    once a day: reminders, arrivals, stays that ended
 voice-agent/
   system-prompt.md            Sena's brain: disclosure, double-confirmation, escalation
-  vapi-config.json            voice pipeline; tools map 1:1 onto the router
+  agent-config.json           the greeting, the model, the eleven tools. Vendor-neutral
+  agent/
+    server.py                 the switchboard: one bot process per call
+    bot.py                    one call — whisper → claude → piper, over LiveKit
+    piper_tts.py              Sena's voice. This is what replaced ElevenLabs
+    sena_client.py            the agent's ONLY route to the router. No DB credentials
+    config.py                 env vs config, and the line between them
+    Dockerfile                whisper's weights baked in, so guest #1 is not the guinea pig
+  web/
+    reception.html            the "Call Reception" button. One file, no build step
+docker-compose.yml            LiveKit + the agent. `npm run voice`
+livekit.yaml                  the webRTC server. This is what replaced Twilio
 templates/
   guest-id-card.html          CR80 card, themed from the hotel's own colours
 scripts/
+  dev-server.mjs              runs api/ locally, so you can test without deploying
   test-schema.mjs             the database cannot oversell or reuse a QR
   test-router.mjs             the router cannot be talked into either
   test-card.mjs               the card scans, and it only scans once
   test-install.mjs            the install cannot damage the co-tenant app
+  test-tools.mjs              the model's tools and the router's tools are one list
   render-sample.cjs           renders the card to PDF/PNG (needs Chrome, offline only)
-docs/samples/                 what a guest actually receives
+docs/
+  voice-stack.md              install, run, tune, and bolt a phone number on later
+  setup-and-deploy.md         database, money, deploy
+  samples/                    what a guest actually receives
 assets/                       fonts + the MuleSoo credit lockup
 ```
 

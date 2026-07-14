@@ -1,0 +1,229 @@
+{
+  "$comment": [
+    "Sena — voice agent configuration. Vendor-neutral by design.",
+    "",
+    "This file replaced vapi-config.json. It holds the things that are true about",
+    "Sena no matter who is carrying the audio: what she says first, which model",
+    "thinks for her, and the eleven tools she may call. The pieces that ARE",
+    "vendor-specific — the LiveKit URL, the Whisper model size, the Piper voice —",
+    "live in the environment, not here, so that swapping any one of them is a",
+    "config change and not an edit to this file.",
+    "",
+    "The tools are in Anthropic's tool shape (name / description / input_schema)",
+    "and are passed to the Messages API untouched. Every tool below maps 1:1 onto",
+    "a function in src/router.mjs. If a tool exists here with no implementation",
+    "there, Sena will hallucinate a success on the phone to a real guest — so the",
+    "names and arguments are deliberately identical on both sides, and",
+    "scripts/test-tools-parity.mjs fails the build if they ever drift apart.",
+    "",
+    "THE DESCRIPTIONS ARE NOT DOCUMENTATION. They are the only instructions the",
+    "model reads at the moment it decides whether to call a tool. The sentence",
+    "'read the reference back before you cancel' is load-bearing prose. Edit it",
+    "the way you would edit a contract, not the way you would edit a comment.",
+    "",
+    "Latency budget: a guest starts to feel the pause at about 900ms. The free",
+    "stack spends it differently to the paid one — faster-whisper on CPU (~300-",
+    "700ms) is slower than Deepgram was, and local Piper (~50ms, no network hop)",
+    "is faster than ElevenLabs was. Net, we are slower. Sonnet stays the model for",
+    "the same reason as before: on a call, a wrong-sounding pause costs more trust",
+    "than a marginally better sentence buys."
+  ],
+
+  "name": "Sena — AI Front Desk",
+
+  "$firstMessage_comment": "AI disclosure inside the first ten seconds is non-negotiable (CLAUDE.md §0 Disclosure Policy). It is here, in the very first utterance, not left to the model to remember. {{hotel_name}} is substituted from the hotel row before the bot joins the room.",
+  "firstMessage": "Good day, {{hotel_name}}. This is Sena — I'm an AI assistant, and I can book a room for you or answer any questions. Calls are recorded so we can help you if anything goes wrong. May I start with your name?",
+
+  "model": {
+    "provider": "anthropic",
+    "model": "claude-sonnet-5",
+    "temperature": 0.3,
+    "$temperature_comment": "Low. This agent quotes prices and policies. Creativity here is a defect.",
+    "max_tokens": 300
+  },
+
+  "$stt_comment": "faster-whisper, running locally on CPU. 'small' is the floor for a guest spelling out an email address; 'base' mishears letters and a wrong address is a lost booking. English-only for now — see CLAUDE.md §0, Amharic is deferred because no self-hostable voice can speak it.",
+  "stt": {
+    "engine": "faster-whisper",
+    "model": "small",
+    "language": "en"
+  },
+
+  "$tts_comment": "Piper, running locally. No network hop, so it is faster than ElevenLabs was and costs nothing. The voice should be warm, mid-pitch and carry an African English accent well — a guest in Pretoria should not feel they have been routed to a call centre abroad.",
+  "tts": {
+    "engine": "piper",
+    "voice": "en_ZA-tom-medium"
+  },
+
+  "tools": [
+    {
+      "name": "log_call_intent",
+      "description": "Record why the guest called, as soon as it is clear. Call once per call.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "intent": {
+            "type": "string",
+            "enum": ["new_booking", "existing_booking", "inquiry", "complaint"]
+          },
+          "language": { "type": "string", "enum": ["en", "am"] }
+        },
+        "required": ["intent", "language"]
+      }
+    },
+    {
+      "name": "check_availability",
+      "description": "Find rooms available for a date range. Returns room types with nightly rate, how many are free, and the total for the stay. Call only once you have read the dates back to the guest and they have confirmed them. Never invent a room or a rate that this did not return.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "check_in": { "type": "string", "description": "YYYY-MM-DD" },
+          "check_out": { "type": "string", "description": "YYYY-MM-DD, must be after check_in" },
+          "guests": { "type": "integer", "minimum": 1, "default": 1 }
+        },
+        "required": ["check_in", "check_out", "guests"]
+      }
+    },
+    {
+      "name": "hold_room",
+      "description": "Place a provisional hold on a room so no other caller can be sold it while you finish this call. MUST be called before you say the total out loud. May fail if the last room went during the conversation — if it does, tell the guest honestly and check availability again.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "room_id": { "type": "string", "description": "id returned by check_availability" },
+          "check_in": { "type": "string", "description": "YYYY-MM-DD" },
+          "check_out": { "type": "string", "description": "YYYY-MM-DD" },
+          "guests_count": { "type": "integer", "minimum": 1 }
+        },
+        "required": ["room_id", "check_in", "check_out", "guests_count"]
+      }
+    },
+    {
+      "name": "save_guest_details",
+      "description": "Persist the guest's details against the held booking. Call this ONLY after the guest has confirmed the whole block of details read back to them a second time (the double-confirmation gate). If any field is unclear after two attempts, escalate instead of guessing.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "booking_id": { "type": "string" },
+          "full_name": { "type": "string" },
+          "phone": { "type": "string", "description": "E.164 where possible, e.g. +27821234567" },
+          "email": { "type": "string" },
+          "nationality": { "type": "string" },
+          "guests_count": { "type": "integer", "minimum": 1 },
+          "arrival_time": { "type": "string", "description": "HH:MM, the guest's expected arrival" },
+          "special_requests": { "type": "string" },
+          "needs_approval": {
+            "type": "boolean",
+            "description": "true if they asked for early check-in or late check-out"
+          },
+          "double_confirmed": {
+            "type": "boolean",
+            "description": "Must be true. Set it only after the guest confirmed the full block read back to them. Sending false will be rejected."
+          }
+        },
+        "required": ["booking_id", "full_name", "phone", "guests_count", "double_confirmed"]
+      }
+    },
+    {
+      "name": "send_payment_link",
+      "description": "Email the guest a secure Paystack payment link during the call. Never take card details by voice. Fails if you have not captured an email address — if it does, ask for one, read it back letter by letter, and save the details again.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "booking_id": { "type": "string" }
+        },
+        "required": ["booking_id"]
+      }
+    },
+    {
+      "name": "check_payment_status",
+      "description": "Ask whether the guest's payment has cleared yet. Poll this while they are paying. Only when it returns paid may you tell the guest the booking is confirmed.",
+      "input_schema": {
+        "type": "object",
+        "properties": { "booking_id": { "type": "string" } },
+        "required": ["booking_id"]
+      }
+    },
+    {
+      "name": "send_confirmation_package",
+      "description": "Email the guest their confirmation and a link to their single-use QR Guest ID card, and notify the owner. Call ONLY after check_payment_status returned paid.",
+      "input_schema": {
+        "type": "object",
+        "properties": { "booking_id": { "type": "string" } },
+        "required": ["booking_id"]
+      }
+    },
+    {
+      "name": "lookup_booking",
+      "description": "Find an existing booking by its reference or the guest's phone number, for a guest calling about a stay they already have.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "reference": { "type": "string" },
+          "phone": { "type": "string" }
+        }
+      }
+    },
+    {
+      "name": "cancel_booking",
+      "description": "Cancel a booking the guest already has. Find it first with lookup_booking and read the reference back to them before you cancel — a cancellation cannot be undone. This NEVER issues a refund: read the hotel's cancellation policy back word for word, tell the guest the hotel will be in touch about any refund, and escalate if they press you on it.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "booking_id": { "type": "string" },
+          "reference": { "type": "string", "description": "the booking reference, if that is all you have" },
+          "reason": { "type": "string", "description": "what the guest said, in their words" }
+        },
+        "required": ["reason"]
+      }
+    },
+    {
+      "name": "escalate_to_human",
+      "description": "Hand the call to a person. Use for: an upset or threatening caller, a safety issue, 10+ rooms or a corporate rate, a second failed payment, suspected fraud, a demand outside policy, or a critical field you still cannot hear clearly after two attempts. Escalating is never a failure; guessing is. On a browser call there is no line to transfer to, so this returns a number: give it to the guest, tell them a person will call them back, and end the call.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "enum": [
+              "complaint",
+              "safety",
+              "group_booking",
+              "payment_failed",
+              "fraud_suspected",
+              "outside_policy",
+              "unclear_after_retries",
+              "guest_requested"
+            ]
+          },
+          "summary": {
+            "type": "string",
+            "description": "One or two sentences for the human picking up, so the guest does not repeat themselves."
+          }
+        },
+        "required": ["reason", "summary"]
+      }
+    },
+    {
+      "name": "end_call",
+      "description": "End the call once the guest has nothing further.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "outcome": {
+            "type": "string",
+            "enum": ["booked", "no_availability", "inquiry_answered", "escalated", "abandoned"]
+          }
+        },
+        "required": ["outcome"]
+      }
+    }
+  ],
+
+  "$recording_comment": "Consent is stated in firstMessage (POPIA, CLAUDE.md §9). Recording without that sentence is unlawful — if the greeting is ever edited, this stays true or recording must be turned off.",
+  "recording_enabled": true,
+
+  "silence_timeout_seconds": 30,
+  "$max_duration_comment": "15 minutes. A booking call runs 4–6; anything at 15 has gone wrong and should be with a human anyway.",
+  "max_duration_seconds": 900
+}

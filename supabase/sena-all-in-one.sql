@@ -145,7 +145,7 @@ create index if not exists sena_rooms_hotel_idx on sena_rooms(hotel_id) where is
 create table if not exists sena_calls (
   id                uuid primary key default gen_random_uuid(),
   hotel_id          uuid not null references sena_hotels(id) on delete cascade,
-  provider_call_id  text unique,                         -- Twilio CallSid / Vapi call id
+  provider_call_id  text unique,                         -- the LiveKit room name (a SIP call id, if a number is ever added)
   from_number       text,
   language          text,                                -- 'en' | 'am', detected from first sentence
   intent            sena_call_intent not null default 'unknown',

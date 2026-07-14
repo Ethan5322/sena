@@ -1,20 +1,29 @@
-# Getting Sena onto a phone number
+# Getting Sena talking
 
-No WhatsApp. No SMS. No subscriptions.
+No WhatsApp. No SMS. No subscriptions. **And now no Vapi, no ElevenLabs and no
+Twilio either** — the voice stack is self-hosted and free. See
+[voice-stack.md](voice-stack.md) for that half; this page is the database, the
+money, and the deploy.
 
 **What is genuinely free:** Supabase, Vercel, Paystack (test keys work the moment
-you sign up), email over Gmail SMTP, and ElevenLabs' free tier.
+you sign up), email over Gmail SMTP, and the entire voice pipeline — LiveKit,
+Whisper and Piper all run on your own box.
 
-**The one thing that cannot be free:** receiving a phone call. Vapi charges a few
-cents a minute and a number costs about a dollar a month. That is pay-as-you-go,
-not a subscription, and Vapi's free credit covers plenty of demo calls. There is
-no free way to answer a telephone.
+**The one thing that is not free:** Anthropic, for Sena's brain. That is
+pay-as-you-go and it is the only meter running.
+
+**The one thing you do not get:** a phone number. Guests reach Sena through a *Call
+Reception* button on a web page, not by dialling. Adding a real number later is a
+bolt-on — [voice-stack.md](voice-stack.md#later-a-real-phone-number) — and there is
+a good reason not to do it first: a South African number needs a regulatory bundle
+(ID, proof of address, days to weeks), and you should not be waiting on a telco to
+find out whether your receptionist can take a booking.
 
 ---
 
 ## Before anything else: never paste a key into a chat
 
-API keys belong in **Vercel's environment variables** and **the Vapi dashboard**.
+API keys belong in **Vercel's environment variables** and your local `.env.local`.
 Never in the repo, never in a message, never in a screenshot. If a key is ever
 exposed — even to someone you trust — revoke it and issue a new one. A leaked key
 is not "probably fine".
@@ -116,24 +125,24 @@ SENA_DEFAULT_HOTEL_ID=<that uuid>
 
 ---
 
-## 4. Vapi + a voice (30 minutes)
+## 4. The voice (one command)
 
-1. Sign up at [vapi.ai](https://vapi.ai).
-2. **Buy a phone number inside Vapi.** Do not start with Twilio: a South African
-   number needs a regulatory bundle (ID + proof of address at a real street
-   address, ~2 business days, sometimes weeks). Demo on a Vapi number today and
-   swap the South African one in later — it is a one-field change.
-3. Create an assistant from `voice-agent/vapi-config.json`, with
-   `voice-agent/system-prompt.md` as the system message.
-4. Set the assistant's **Server URL** to
-   `https://YOUR-APP.vercel.app/api/sena/tool`, and its **Server Secret** to the
-   value from step 6.
-5. Voice: sign up at [elevenlabs.io](https://elevenlabs.io), pick a warm,
-   mid-pitch, gender-neutral voice that carries a South African English accent.
+There is nothing to sign up for. The voice stack is three open-source components
+in a container on your own machine, and the full guide — install, run, tune,
+troubleshoot, and how to bolt a real phone number on later — is
+**[voice-stack.md](voice-stack.md)**.
 
-   - The **voice ID** goes in `SENA_VOICE_ID`.
-   - The **API key** goes in the **Vapi dashboard** as a provider credential —
-     never in this repo.
+The short version, once `.env.local` has your `ANTHROPIC_API_KEY` and
+`SENA_WEBHOOK_SECRET`:
+
+```bash
+npm run dev      # terminal 1 — the router, the gates, the database
+npm run voice    # terminal 2 — LiveKit + Whisper + Claude + Piper, in docker
+```
+
+Then open **http://localhost:8080** and click *Call Reception*.
+
+The only key that leaves your machine is Anthropic's.
 
 ---
 
@@ -164,9 +173,15 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 SENA_WEBHOOK_SECRET=<that>
 ```
 
-Paste the same value into Vapi's **Server Secret** field. It is what proves a tool
-call really came from Vapi. Without it, that endpoint is a public API for
-reserving a hotel's entire inventory and reading its guest list.
+The voice agent sends this on every tool call as the `x-sena-secret` header, and
+`api/sena/tool.mjs` checks it in constant time. It is what proves a tool call came
+from **our agent** and not from the internet. Without it, that endpoint is a public
+API for reserving a hotel's entire inventory and reading its guest list — names,
+phones, nationalities. That is a POPIA breach with a URL.
+
+It must be byte-identical in `.env.local` (which the agent container reads) and in
+Vercel's environment variables. If they disagree, every tool call 401s and Sena
+apologises to the guest for a problem that is in your `.env` file.
 
 ---
 

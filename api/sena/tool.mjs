@@ -1,9 +1,23 @@
 // ============================================================================
 // POST /api/sena/tool — the endpoint every one of Sena's tools posts to.
 //
-// vapi-config.json points `server.url` here and signs each request with
-// `server.secret`. This handler verifies that secret, routes on the tool name,
-// and hands the result back in the shape Vapi expects.
+// The voice agent (voice-agent/agent/) calls this over HTTP and signs each
+// request with SENA_WEBHOOK_SECRET. This handler verifies that secret, routes on
+// the tool name, and hands the result back.
+//
+// THE CONTRACT IS OURS NOW. It used to be Vapi's: a `toolCallList` envelope, an
+// `x-vapi-secret` header, a `{results:[{toolCallId, result}]}` reply, all of it
+// shaped by a vendor. It is now one tool per request, in the plainest shape that
+// works:
+//
+//   → { "type": "tool-call", "tool": "hold_room", "args": {...}, "call": {...} }
+//   ← { "ok": true, "result": { ... } }
+//
+//   → { "type": "call-ended", "call": {...}, "transcript": "...", "outcome": "booked" }
+//   ← { "ok": true }
+//
+// That is the whole surface. Anything that can speak HTTP can be Sena's voice —
+// a Pipecat bot on webRTC today, a SIP trunk tomorrow, a test harness always.
 //
 // WHY THE SECRET CHECK IS NOT OPTIONAL: this endpoint holds a room, saves a
 // guest and reads bookings. Unauthenticated, it is a public API for reserving a
@@ -49,7 +63,7 @@ function services() {
 }
 
 /** Constant-time, so the secret cannot be recovered a byte at a time. */
-function secretOk(given) {
+export function secretOk(given) {
   const want = process.env.SENA_WEBHOOK_SECRET;
   if (!want || !given) return false;
   const a = Buffer.from(String(given));
@@ -60,69 +74,65 @@ function secretOk(given) {
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'method not allowed' });
 
-  if (!secretOk(req.headers['x-vapi-secret'])) {
+  if (!secretOk(req.headers['x-sena-secret'])) {
     return res.status(401).json({ error: 'unauthorised' });
   }
 
-  const message = req.body?.message;
-  if (!message) return res.status(400).json({ error: 'no message' });
+  const body = req.body || {};
+  const call = body.call || {};
+
+  // Validate the envelope BEFORE touching the database. A malformed request
+  // should not open a Postgres pool, and this endpoint should be answerable
+  // without one — that is what makes it testable.
+  if (body.type !== 'tool-call' && body.type !== 'call-ended') {
+    return res.status(400).json({ error: `unknown type: ${body.type}` });
+  }
+  if (body.type === 'tool-call' && !body.tool) {
+    return res.status(400).json({ error: 'no tool named' });
+  }
+
+  const ctx = {
+    providerCallId: call.id,
+    // Which hotel Sena is answering for. On webRTC the room carries it (the
+    // server chose it when it minted the token — the browser cannot pick). On a
+    // phone line it is the number the guest dialled. See resolveHotelId().
+    hotelId: call.hotel_id || null,
+    dialedNumber: call.dialed_number || null,
+    fromNumber: call.from_number || null,
+  };
 
   const { router } = services();
 
-  const call = message.call || {};
-  const ctx = {
-    providerCallId: call.id,
-    // The number the guest dialled — this is what identifies WHICH hotel Sena is
-    // answering for. Multi-tenancy is decided right here.
-    dialedNumber: call.phoneNumber?.number || message.phoneNumber?.number || null,
-    fromNumber: call.customer?.number || message.customer?.number || null,
-  };
-
   try {
-    if (message.type === 'end-of-call-report') {
+    if (body.type === 'call-ended') {
       await router.saveTranscript({
         providerCallId: ctx.providerCallId,
-        transcript: message.artifact?.transcript || message.transcript,
-        outcome: message.endedReason,
+        transcript: body.transcript,
+        outcome: body.outcome,
       });
       return res.status(200).json({ ok: true });
     }
 
-    if (message.type !== 'tool-calls') {
-      return res.status(200).json({ ok: true, ignored: message.type });
+    try {
+      const result = await router.handle(body.tool, body.args ?? {}, ctx);
+      return res.status(200).json({ ok: true, result });
+    } catch (err) {
+      // Sena's prompt: never explain an error to a guest — escalate. So we hand
+      // her an instruction, not a stack trace. The detail goes to the log.
+      //
+      // 200, not 500, on purpose: this is a tool RESULT, and the agent must put
+      // it in front of the model as one. An HTTP error would be retried or
+      // swallowed, and Sena would sit in silence while the guest waits.
+      console.error(`[sena] tool ${body.tool} failed:`, err);
+      return res.status(200).json({
+        ok: true,
+        result: {
+          ok: false,
+          reason: err instanceof ToolError ? 'tool_error' : 'internal_error',
+          say: 'Something went wrong on our side. Apologise, and escalate to a person.',
+        },
+      });
     }
-
-    const results = [];
-    for (const tc of message.toolCallList || []) {
-      const name = tc.function?.name || tc.name;
-      let args = tc.function?.arguments ?? tc.arguments ?? {};
-      if (typeof args === 'string') {
-        try {
-          args = JSON.parse(args);
-        } catch {
-          args = {};
-        }
-      }
-
-      try {
-        const result = await router.handle(name, args, ctx);
-        results.push({ toolCallId: tc.id, result: JSON.stringify(result) });
-      } catch (err) {
-        // Sena's prompt: never explain an error to a guest — escalate. So we
-        // hand her an instruction, not a stack trace. The detail goes to the log.
-        console.error(`[sena] tool ${name} failed:`, err);
-        results.push({
-          toolCallId: tc.id,
-          result: JSON.stringify({
-            ok: false,
-            reason: err instanceof ToolError ? 'tool_error' : 'internal_error',
-            say: 'Something went wrong on our side. Apologise, and escalate to a person.',
-          }),
-        });
-      }
-    }
-
-    return res.status(200).json({ results });
   } catch (err) {
     console.error('[sena] handler failed:', err);
     return res.status(500).json({ error: 'internal error' });

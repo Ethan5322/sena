@@ -1,0 +1,169 @@
+<!doctype html>
+<!--
+  Call Reception — the guest's end of the wire.
+
+  This is the whole frontend. It asks the switchboard for a room, joins it over
+  webRTC, publishes the guest's microphone, and plays back whatever Sena says.
+  There is no framework and no build step: it is one file, it is served as-is,
+  and a hotel can paste it into their existing site.
+
+  THE ONLY BROWSER PERMISSION IS THE MICROPHONE. No camera, no screen. If this
+  page ever asks for more, something has gone wrong.
+
+  LiveKit's client SDK is loaded from a CDN here for the same reason the rest of
+  this prototype is simple: no bundler. For production, vendor it — a hotel's
+  reception line should not stop working because a CDN did.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Reception</title>
+  <style>
+    :root { --ink:#0B1220; --accent:#C8A24B; --paper:#F7F5F2; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100dvh; display: grid; place-items: center;
+      background: var(--paper); color: var(--ink);
+      font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+    main { width: min(28rem, 92vw); text-align: center; padding: 2rem; }
+    h1 { font-size: 1.6rem; margin: 0 0 .35rem; letter-spacing: -.01em; }
+    .sub { color: #6B7280; margin: 0 0 2rem; font-size: .95rem; }
+
+    button {
+      width: 100%; padding: 1rem 1.25rem; border: 0; border-radius: 999px;
+      background: var(--ink); color: #fff; font-size: 1.05rem; font-weight: 600;
+      cursor: pointer; transition: transform .08s ease, opacity .2s ease;
+    }
+    button:hover:not(:disabled) { transform: translateY(-1px); }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    button.hangup { background: #B42318; }
+
+    .status {
+      margin-top: 1.5rem; min-height: 1.5rem;
+      font-size: .9rem; color: #6B7280;
+    }
+    .status[data-live="true"] { color: var(--ink); font-weight: 600; }
+    .status[data-error="true"] { color: #B42318; }
+
+    /* The one piece of feedback that matters: proof the line is open. Guests who
+       cannot tell whether a call connected will talk over the greeting. */
+    .orb {
+      width: 84px; height: 84px; margin: 0 auto 1.75rem; border-radius: 50%;
+      background: var(--accent); opacity: .18;
+      transition: opacity .2s ease, transform .2s ease;
+    }
+    .orb[data-live="true"] { opacity: 1; animation: pulse 2s ease-in-out infinite; }
+    @keyframes pulse {
+      0%, 100% { transform: scale(1);    box-shadow: 0 0 0 0    rgba(200,162,75,.45); }
+      50%      { transform: scale(1.04); box-shadow: 0 0 0 14px rgba(200,162,75,0); }
+    }
+    @media (prefers-reduced-motion: reduce) { .orb { animation: none !important; } }
+
+    .ai-notice {
+      margin-top: 2.5rem; padding-top: 1.25rem; border-top: 1px solid #E5E7EB;
+      font-size: .8rem; color: #9CA3AF;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="orb" id="orb" data-live="false"></div>
+
+    <h1>Reception</h1>
+    <p class="sub">Speak to Sena about a room, a booking, or anything else.</p>
+
+    <button id="call">Call Reception</button>
+    <p class="status" id="status">&nbsp;</p>
+
+    <!--
+      The disclosure is ALSO spoken, in the first sentence of the call, because
+      CLAUDE.md §0 requires it and a guest who never reads the page must still be
+      told. This is belt and braces, not the mechanism.
+    -->
+    <p class="ai-notice">
+      You will be speaking to an AI assistant. Calls are recorded so we can help
+      you if something goes wrong.
+    </p>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/livekit-client@2/dist/livekit-client.umd.min.js"></script>
+  <script>
+    const SWITCHBOARD = window.SENA_SWITCHBOARD || '';   // same origin by default
+    const HOTEL_ID    = window.SENA_HOTEL_ID    || null; // null → the server's default
+
+    const button = document.getElementById('call');
+    const status = document.getElementById('status');
+    const orb    = document.getElementById('orb');
+
+    let room = null;
+
+    function say(text, { live = false, error = false } = {}) {
+      status.textContent = text;
+      status.dataset.live = String(live);
+      status.dataset.error = String(error);
+      orb.dataset.live = String(live);
+    }
+
+    async function startCall() {
+      button.disabled = true;
+      say('Connecting…');
+
+      try {
+        const res = await fetch(`${SWITCHBOARD}/connect`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ hotel_id: HOTEL_ID }),
+        });
+        if (!res.ok) throw new Error(`switchboard said ${res.status}`);
+        const { url, token } = await res.json();
+
+        room = new LivekitClient.Room({ adaptiveStream: false, dynacast: false });
+
+        // Sena's voice arrives as a track we have to actually attach to the page.
+        // Forget this and the call connects perfectly and plays nothing.
+        room.on(LivekitClient.RoomEvent.TrackSubscribed, (track) => {
+          if (track.kind === 'audio') track.attach().play?.();
+        });
+
+        room.on(LivekitClient.RoomEvent.Disconnected, () => endCall({ silent: true }));
+
+        await room.connect(url, token);
+        // The microphone prompt happens here. A guest who declines gets a call
+        // where Sena talks and nobody answers, so we check and say so.
+        await room.localParticipant.setMicrophoneEnabled(true);
+
+        say('Connected — Sena is listening', { live: true });
+        button.textContent = 'End call';
+        button.classList.add('hangup');
+        button.disabled = false;
+        button.onclick = () => endCall();
+
+      } catch (err) {
+        console.error(err);
+        const denied = err && /permission|not allowed|denied/i.test(err.message || '');
+        say(
+          denied
+            ? 'Sena cannot hear you — allow microphone access and try again.'
+            : 'Could not connect. Please try again, or phone the hotel directly.',
+          { error: true }
+        );
+        button.disabled = false;
+      }
+    }
+
+    async function endCall({ silent = false } = {}) {
+      if (room) { await room.disconnect(); room = null; }
+      button.textContent = 'Call Reception';
+      button.classList.remove('hangup');
+      button.disabled = false;
+      button.onclick = startCall;
+      if (!silent) say('Call ended.');
+      else say('Call ended.');
+    }
+
+    button.onclick = startCall;
+  </script>
+</body>
+</html>

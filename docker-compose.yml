@@ -1,0 +1,67 @@
+# Sena's voice stack, on one machine. `docker compose up`.
+#
+# Two containers, both free, neither phoning home:
+#
+#   livekit   the webRTC server. Carries the audio between the guest's browser
+#             and the bot. This is what replaced Twilio.
+#   agent     the switchboard + one bot process per call. Whisper, Claude and
+#             Piper live in here. This is what replaced Vapi and ElevenLabs.
+#
+# The third piece — the Node API with the router, the gates and the database —
+# runs OUTSIDE compose, with `npm run dev`. That is deliberate: it is the part
+# that goes to Vercel in production, and running it the same way locally means
+# you are testing the thing you ship.
+#
+#   host.docker.internal is how the agent container reaches `npm run dev` on your
+#   laptop. On Linux it needs the extra_hosts line below; on macOS and Windows
+#   Docker provides it.
+
+services:
+  livekit:
+    image: livekit/livekit-server:latest
+    command: --config /etc/livekit.yaml --node-ip 127.0.0.1
+    # --node-ip 127.0.0.1 is a LOCAL-ONLY shortcut. LiveKit advertises this
+    # address to browsers for the media connection, so on a real server it must
+    # be that server's public IP or nobody can hear anything. It is the single
+    # most common reason a self-hosted LiveKit "connects" and stays silent.
+    restart: unless-stopped
+    ports:
+      - "7880:7880"            # signalling (webRTC handshake, HTTP)
+      - "7881:7881"            # TCP fallback for media, for guests behind hard NATs
+      - "50000-50060:50000-50060/udp"  # the media itself
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+
+  agent:
+    build:
+      context: ./voice-agent
+      dockerfile: agent/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - livekit
+    ports:
+      - "8080:8080"            # the switchboard, and the Call Reception page
+    environment:
+      # ── Where the brain is ─────────────────────────────────────────────────
+      # `npm run dev` on the host. In production this is your Vercel URL.
+      SENA_API_URL: ${SENA_API_URL:-http://host.docker.internal:3000}
+      SENA_WEBHOOK_SECRET: ${SENA_WEBHOOK_SECRET:?set it in .env.local}
+      SENA_DEFAULT_HOTEL_ID: ${SENA_DEFAULT_HOTEL_ID:-}
+
+      # ── Where the audio is ─────────────────────────────────────────────────
+      # ws://livekit:7880 is the container-to-container address, used by the bot.
+      # The BROWSER is told a different one (LIVEKIT_PUBLIC_URL) because it is not
+      # on the docker network — it cannot resolve "livekit".
+      LIVEKIT_URL: ${LIVEKIT_PUBLIC_URL:-ws://localhost:7880}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-devkey}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-secret-at-least-32-characters-long}
+
+      # ── The brain, the ears, the voice ─────────────────────────────────────
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?the only paid thing in this stack}
+      WHISPER_MODEL: ${WHISPER_MODEL:-small}
+      PIPER_VOICE: ${PIPER_VOICE:-/voices/en_ZA-tom-medium.onnx}
+
+      SENA_ALLOWED_ORIGINS: ${SENA_ALLOWED_ORIGINS:-*}
+    extra_hosts:
+      # Linux only; harmless on macOS and Windows.
+      - "host.docker.internal:host-gateway"
