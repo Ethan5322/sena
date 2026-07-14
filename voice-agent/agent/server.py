@@ -151,7 +151,9 @@ async def connect(req: ConnectRequest) -> dict:
 
     log.info("call %s → hotel %s (bot pid %s)", room, hotel_id, proc.pid)
 
-    return {"url": settings.livekit_url, "token": guest_token, "room": room}
+    # The PUBLIC address, never the bot's. The browser is not on the docker
+    # network and cannot resolve "livekit" — see Settings for the split.
+    return {"url": settings.livekit_public_url, "token": guest_token, "room": room}
 
 
 async def _reap(room: str, proc: asyncio.subprocess.Process) -> None:

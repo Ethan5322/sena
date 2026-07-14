@@ -6,7 +6,7 @@
     "type": "commonjs",
     "scripts": {
         "dev": "node scripts/dev-server.mjs",
-        "voice": "docker compose up --build",
+        "voice": "docker compose --env-file .env.local up --build",
         "samples": "node scripts/render-sample.cjs",
         "test": "npm run test:db && npm run test:install && npm run test:router && npm run test:card && npm run test:tools && npm run test:e2e && npm run test:agent",
         "test:db": "node scripts/test-schema.mjs",

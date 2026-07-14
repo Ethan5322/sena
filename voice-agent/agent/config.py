@@ -42,8 +42,21 @@ class Settings:
     sena_api_url: str
     sena_secret: str
 
-    # Where the audio lives.
+    # Where the audio lives. TWO addresses for the same server, because there are
+    # two audiences on two networks:
+    #
+    #   livekit_url         what the BOT dials. Inside docker that is the
+    #                       container-to-container address (ws://livekit:7880).
+    #   livekit_public_url  what the BROWSER is told in /connect. The guest's
+    #                       laptop is not on the docker network — it cannot
+    #                       resolve "livekit" — so it gets ws://localhost:7880,
+    #                       or wss://your-host on a real server.
+    #
+    # Collapse these into one variable and one of the two parties always dials a
+    # number that does not exist for it: the browser gets a hostname it cannot
+    # resolve, or the bot dials itself. Both look like "connected, but silent".
     livekit_url: str
+    livekit_public_url: str
     livekit_api_key: str
     livekit_api_secret: str
 
@@ -64,6 +77,10 @@ class Settings:
             sena_api_url=_require("SENA_API_URL"),
             sena_secret=_require("SENA_WEBHOOK_SECRET"),
             livekit_url=_require("LIVEKIT_URL"),
+            # Falls back to the bot's address, which is right whenever both are
+            # on the same network (running everything outside docker).
+            livekit_public_url=os.environ.get("LIVEKIT_PUBLIC_URL", "").strip()
+            or _require("LIVEKIT_URL"),
             livekit_api_key=_require("LIVEKIT_API_KEY"),
             livekit_api_secret=_require("LIVEKIT_API_SECRET"),
             anthropic_api_key=_require("ANTHROPIC_API_KEY"),
