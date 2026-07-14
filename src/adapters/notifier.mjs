@@ -124,7 +124,10 @@ export function createNotifier({ host, port, user, pass, from }) {
           `Paid: ${money(pkg)}\n\n` +
           (pkg.card_url
             ? `Your guest ID — open this at the front desk:\n${pkg.card_url}\n\nIt works once.`
-            : `Guest ID: ${pkg.guest_id.guest_id_number}`),
+            : `Guest ID: ${pkg.guest_id.guest_id_number}`) +
+          (pkg.confirmation_url
+            ? `\n\nYour booking confirmation (print or save as PDF):\n${pkg.confirmation_url}`
+            : ''),
         html: wrap(
           a,
           `You're confirmed`,
@@ -144,6 +147,12 @@ export function createNotifier({ host, port, user, pass, from }) {
                   ${button(a, pkg.card_url, 'Open my guest ID')}
                   <p style="font-size:.8rem;color:#6B7280">It can only be scanned once.</p>`
                : `<p>Guest ID: <strong>${esc(pkg.guest_id.guest_id_number)}</strong></p>`
+           }
+           ${
+             pkg.confirmation_url
+               ? `<p style="font-size:.85rem"><a href="${esc(pkg.confirmation_url)}" style="color:#0B1220">
+                    Your booking confirmation</a> — print it or save it as a PDF.</p>`
+               : ''
            }`
         ),
       });

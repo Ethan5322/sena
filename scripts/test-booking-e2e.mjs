@@ -75,9 +75,12 @@ const die = (msg) => {
   process.exit(1);
 };
 
-// PGlite has to apply the whole install before it can answer anything.
+// PGlite has to apply the whole install before it can answer anything. Two
+// minutes, not twenty-five seconds: on a 2-core laptop that is also running
+// the docker voice stack, the install alone can take over a minute, and a
+// timeout that fails healthy code fails the wrong thing.
 async function waitForServer() {
-  for (let i = 0; i < 100; i++) {
+  for (let i = 0; i < 480; i++) {
     try {
       const res = await fetch(`${BASE}/api/sena/tool`, { method: 'POST' });
       if (res.status === 401 || res.status === 400) return;

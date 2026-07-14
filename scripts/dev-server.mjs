@@ -71,6 +71,8 @@ const ROUTES = {
   '/api/sena/tool': { module: '../api/sena/tool.mjs', parseBody: true },
   '/api/sena/hotel': { module: '../api/sena/hotel.mjs', parseBody: false },
   '/api/sena/card': { module: '../api/sena/card.mjs', parseBody: false },
+  '/api/sena/confirmation': { module: '../api/sena/confirmation.mjs', parseBody: false },
+  '/api/sena/dashboard': { module: '../api/sena/dashboard.mjs', parseBody: false },
   '/api/sena/desk': { module: '../api/sena/desk.mjs', parseBody: false },
   '/api/sena/cron': { module: '../api/sena/cron.mjs', parseBody: false },
   // Raw stream only — see the note at the top of this file.
@@ -111,8 +113,13 @@ if (DEMO) {
   // The agent has to authenticate, and in demo mode there is nobody to keep a
   // secret from. Fixed, so the agent container can be given the same one.
   process.env.SENA_WEBHOOK_SECRET ||= 'demo-secret';
+  // Same reasoning: in demo mode there is no owner to keep the dashboard from.
+  process.env.SENA_OWNER_KEY ||= 'demo-owner';
   console.log(`  hotel:  ${demo.hotel.name}  (${demo.hotel.id})`);
-  console.log(`  secret: ${process.env.SENA_WEBHOOK_SECRET}\n`);
+  console.log(`  secret: ${process.env.SENA_WEBHOOK_SECRET}`);
+  console.log(
+    `  owner:  http://localhost:${PORT}/api/sena/dashboard?key=${process.env.SENA_OWNER_KEY}\n`
+  );
 }
 
 const server = http.createServer(async (req, res) => {

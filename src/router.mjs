@@ -447,6 +447,11 @@ export function createRouter({
       card_url: publicUrl
         ? `${publicUrl}/api/sena/card?v=${encodeURIComponent(guestId.verification_number)}`
         : null,
+      // The printable proof of payment (§7 document 1). Same credential, and it
+      // outlives the check-in — see src/confirmation.mjs.
+      confirmation_url: publicUrl
+        ? `${publicUrl}/api/sena/confirmation?v=${encodeURIComponent(guestId.verification_number)}`
+        : null,
     };
 
     const guestSend = await notifier.sendConfirmation({ to: guest.email, pkg });

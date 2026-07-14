@@ -1,0 +1,223 @@
+<!doctype html>
+<!-- ==========================================================================
+  Sena — Booking Confirmation (CLAUDE.md §7, document 1 of the package).
+
+  An A4 document that is a WEB PAGE first and a PDF second, for the same reason
+  the guest ID card is (src/card.mjs): Vercel has no Chrome. The guest opens the
+  link, and the Print button (or Ctrl+P) produces the PDF — every browser ships
+  that renderer for free. @page below is what makes the print an honest A4.
+
+  Themed from sena_hotels' own row: this is the HOTEL's letterhead, not Sena's.
+  The MuleSoo credit stamp in the footer is the one non-negotiable (§0.0).
+=========================================================================== -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Booking Confirmation — {{reference}}</title>
+<style>
+{{font_faces}}
+
+@page { size: A4; margin: 14mm; }
+
+:root {
+  --accent: {{brand_accent}};
+  --primary: {{brand_primary}};
+  --ink: #0B1220;
+  --muted: #6B7280;
+  --line: #E3E6EC;
+}
+* { box-sizing: border-box; margin: 0; }
+html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+body {
+  font: 15px/1.55 'DM Sans', system-ui, sans-serif;
+  color: var(--ink);
+  background: #EDEFF2;
+}
+.sheet {
+  max-width: 210mm;
+  min-height: 280mm;
+  margin: 1.5rem auto;
+  background: #fff;
+  padding: 16mm 18mm;
+  box-shadow: 0 8px 30px rgba(11,18,32,.12);
+  display: flex;
+  flex-direction: column;
+}
+@media print {
+  body { background: #fff; }
+  .sheet { margin: 0; max-width: none; min-height: 0; box-shadow: none; padding: 0; }
+  .no-print { display: none !important; }
+}
+
+/* ── Letterhead ── */
+header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; }
+.hotel-name {
+  font: 800 1.7rem/1.2 'Sora', sans-serif;
+  color: var(--primary);
+  letter-spacing: -.01em;
+}
+.hotel-contact { color: var(--muted); font-size: .82rem; margin-top: .35rem; }
+.doc-kind { text-align: right; }
+.doc-kind .kind {
+  font: 600 .8rem 'Sora', sans-serif;
+  text-transform: uppercase;
+  letter-spacing: .14em;
+  color: var(--accent);
+}
+.doc-kind .ref { font: 800 1.35rem 'Sora', sans-serif; margin-top: .15rem; }
+.paid-badge {
+  display: inline-block;
+  margin-top: .5rem;
+  padding: .25rem .7rem;
+  border-radius: 999px;
+  background: #DCFCE7;
+  color: #15803D;
+  border: 1px solid #86EFAC;
+  font: 600 .78rem 'Sora', sans-serif;
+  letter-spacing: .06em;
+}
+.rule { border: 0; border-top: 3px solid var(--accent); margin: 1.1rem 0 1.4rem; }
+
+/* ── Detail grid ── */
+.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 1.4rem; }
+@media (max-width: 640px) { .cols { grid-template-columns: 1fr; } .sheet { padding: 1.25rem; } }
+h2 {
+  font: 600 .74rem 'Sora', sans-serif;
+  text-transform: uppercase;
+  letter-spacing: .12em;
+  color: var(--muted);
+  margin-bottom: .55rem;
+}
+dl { font-size: .92rem; }
+dl div { display: flex; justify-content: space-between; gap: 1rem; padding: .32rem 0; border-bottom: 1px solid var(--line); }
+dt { color: var(--muted); }
+dd { text-align: right; font-weight: 500; }
+
+/* ── Payment ── */
+.payment { margin-top: 1.4rem; }
+table { width: 100%; border-collapse: collapse; font-size: .92rem; }
+th { text-align: left; font: 600 .74rem 'Sora', sans-serif; text-transform: uppercase;
+     letter-spacing: .1em; color: var(--muted); padding: .4rem 0; border-bottom: 2px solid var(--ink); }
+th:last-child, td:last-child { text-align: right; }
+td { padding: .5rem 0; border-bottom: 1px solid var(--line); }
+tr.total td { border-bottom: 0; font: 800 1.05rem 'Sora', sans-serif; padding-top: .7rem; }
+tr.total td:last-child { color: var(--primary); }
+
+/* ── Verification ── */
+.verify {
+  margin-top: 1.4rem;
+  display: flex;
+  gap: 1.1rem;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: .9rem 1.1rem;
+}
+.verify img { width: 84px; height: 84px; }
+.verify .num { font: 800 1.05rem 'Sora', monospace; letter-spacing: .12em; }
+.verify p { font-size: .8rem; color: var(--muted); margin-top: .2rem; }
+
+/* ── Policy ── */
+.policy { margin-top: 1.4rem; font-size: .8rem; color: var(--muted); }
+.policy strong { color: var(--ink); }
+
+/* ── Footer ── */
+footer {
+  margin-top: auto;
+  padding-top: 1.4rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 1rem;
+}
+footer .issued { font-size: .72rem; color: var(--muted); }
+footer img { height: 34px; }
+
+/* ── Print button ── */
+.print-btn {
+  position: fixed; top: 1rem; right: 1rem;
+  padding: .7rem 1.2rem; border: 0; border-radius: 9px;
+  background: var(--ink); color: #fff;
+  font: 600 .9rem 'Sora', sans-serif; cursor: pointer;
+  box-shadow: 0 4px 14px rgba(11,18,32,.25);
+}
+</style>
+</head>
+<body>
+<button class="print-btn no-print" onclick="window.print()">Print / Save as PDF</button>
+
+<div class="sheet">
+  <header>
+    <div>
+      <div class="hotel-name">{{hotel_name}}</div>
+      <div class="hotel-contact">{{hotel_address}}<br>{{hotel_phone}} · {{hotel_email}}</div>
+    </div>
+    <div class="doc-kind">
+      <div class="kind">Booking Confirmation</div>
+      <div class="ref">{{reference}}</div>
+      <span class="paid-badge">✓ PAID</span>
+    </div>
+  </header>
+
+  <hr class="rule">
+
+  <div class="cols">
+    <section>
+      <h2>Guest</h2>
+      <dl>
+        <div><dt>Full name</dt><dd>{{guest_name}}</dd></div>
+        <div><dt>Phone</dt><dd>{{guest_phone}}</dd></div>
+        <div><dt>Email</dt><dd>{{guest_email}}</dd></div>
+        <div><dt>Nationality</dt><dd>{{nationality}}</dd></div>
+        <div><dt>Guests</dt><dd>{{guests_count}}</dd></div>
+      </dl>
+    </section>
+    <section>
+      <h2>Stay</h2>
+      <dl>
+        <div><dt>Room</dt><dd>{{room_name}}</dd></div>
+        <div><dt>Check-in</dt><dd>{{check_in}} from {{check_in_time}}</dd></div>
+        <div><dt>Check-out</dt><dd>{{check_out}} by {{check_out_time}}</dd></div>
+        <div><dt>Nights</dt><dd>{{nights}}</dd></div>
+        <div><dt>Guest ID</dt><dd>{{guest_id_number}}</dd></div>
+      </dl>
+    </section>
+  </div>
+
+  <section class="payment">
+    <h2>Payment</h2>
+    <table>
+      <tr><th>Description</th><th>Amount</th></tr>
+      <tr>
+        <td>{{room_name}} · {{nights}} night(s) at {{currency}} {{rate}}/night</td>
+        <td>{{currency}} {{total}}</td>
+      </tr>
+      <tr>
+        <td style="color:var(--muted)">Paid via {{payment_provider}} · ref {{payment_reference}} · {{paid_at}}</td>
+        <td style="color:#15803D;font-weight:600">PAID</td>
+      </tr>
+      <tr class="total"><td>Total paid</td><td>{{currency}} {{total}}</td></tr>
+    </table>
+  </section>
+
+  <section class="verify">
+    <img src="{{qr_data_uri}}" alt="Check-in QR code">
+    <div>
+      <div class="num">{{verification_number}}</div>
+      <p>Booking verification number. Present this QR — on screen or on paper —
+         at the front desk. It checks in exactly once.</p>
+    </div>
+  </section>
+
+  <section class="policy">
+    <strong>Cancellation policy:</strong> {{cancellation_policy}}
+  </section>
+
+  <footer>
+    <div class="issued">Issued {{issued_at}} · Booking taken by Sena, the AI front desk</div>
+    <img src="{{credit_data_uri}}" alt="Built by MuleSoo Digital Services">
+  </footer>
+</div>
+</body>
+</html>

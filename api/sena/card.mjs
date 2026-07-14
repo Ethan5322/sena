@@ -13,11 +13,13 @@
 // ID is spent the card says so rather than continuing to look valid.
 // ============================================================================
 
-import { createPgDb } from '../../src/db.mjs';
+// getServices(), not a raw pool: in production it builds the same pg pool this
+// used to, and in demo mode it is the in-process Postgres — so the card link in
+// the demo mail actually opens, which is the moment a prospect judges.
+import { getServices } from '../../src/services.mjs';
 import { buildCardHtml } from '../../src/card.mjs';
 
-let db;
-const database = () => (db ??= createPgDb(process.env.DATABASE_URL));
+const database = () => getServices().db;
 
 const escape = (s) =>
   String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));

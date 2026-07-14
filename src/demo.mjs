@@ -99,7 +99,10 @@ export async function createDemoServices({ publicUrl = 'http://localhost:3000' }
     async sendConfirmation({ to, pkg }) {
       return write('confirmation', to, `Confirmed — ${pkg.booking.reference}`,
         `<p>Booking ${pkg.booking.reference} confirmed.</p>` +
-        (pkg.card_url ? `<p>Your guest ID: <a href="${pkg.card_url}">${pkg.card_url}</a></p>` : ''));
+        (pkg.card_url ? `<p>Your guest ID: <a href="${pkg.card_url}">${pkg.card_url}</a></p>` : '') +
+        (pkg.confirmation_url
+          ? `<p>Your booking confirmation (print/PDF): <a href="${pkg.confirmation_url}">${pkg.confirmation_url}</a></p>`
+          : ''));
     },
     async notifyOwner({ to, pkg }) {
       return write('owner-booking', to, `New booking — ${pkg.booking.reference}`,
