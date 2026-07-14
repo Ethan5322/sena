@@ -43,6 +43,7 @@ ARG WHISPER_MODEL=small
 RUN python -c "from faster_whisper import WhisperModel; WhisperModel('${WHISPER_MODEL}', device='cpu', compute_type='int8')"
 
 COPY agent/ /app/agent/
+COPY web/ /app/web/
 COPY system-prompt.md agent-config.json /app/
 
 # piper is a console script on PATH now, so the binary default in piper_tts.py
