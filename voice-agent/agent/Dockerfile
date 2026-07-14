@@ -17,7 +17,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # chase per platform. requirements.txt pins it.
 WORKDIR /app/agent
 COPY agent/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# --timeout/--retries: the wheels here are 30–60MB each and a slow line's
+# read-timeout aborts the whole layer; give a stalled download time to recover.
+RUN pip install --no-cache-dir --timeout 120 --retries 10 -r requirements.txt
 
 # ── The voice ───────────────────────────────────────────────────────────────
 # Piper has NO South African English voice — only en_GB and en_US exist. South
