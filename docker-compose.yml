@@ -19,11 +19,12 @@
 services:
   livekit:
     image: livekit/livekit-server:latest
-    command: --config /etc/livekit.yaml --node-ip 127.0.0.1
-    # --node-ip 127.0.0.1 is a LOCAL-ONLY shortcut. LiveKit advertises this
-    # address to browsers for the media connection, so on a real server it must
-    # be that server's public IP or nobody can hear anything. It is the single
-    # most common reason a self-hosted LiveKit "connects" and stays silent.
+    command: --config /etc/livekit.yaml --node-ip ${LIVEKIT_NODE_IP:-127.0.0.1}
+    # LIVEKIT_NODE_IP is the address LiveKit advertises to browsers for the
+    # media connection. 127.0.0.1 only works for a browser on this machine; a
+    # phone on the same WiFi needs the PC's LAN IP, and a real server needs its
+    # public IP — or nobody can hear anything. It is the single most common
+    # reason a self-hosted LiveKit "connects" and stays silent.
     restart: unless-stopped
     ports:
       - "7880:7880"            # signalling (webRTC handshake, HTTP)
