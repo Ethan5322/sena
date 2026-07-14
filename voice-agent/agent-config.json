@@ -49,10 +49,10 @@
     "language": "en"
   },
 
-  "$tts_comment": "Piper, running locally. No network hop, so it is faster than ElevenLabs was and costs nothing. The voice should be warm, mid-pitch and carry an African English accent well — a guest in Pretoria should not feel they have been routed to a call centre abroad.",
+  "$tts_comment": "Piper, running locally. No network hop, so it is faster than ElevenLabs was and costs nothing. HONEST NOTE ON THE VOICE: Piper has no South African English voice (only en_GB and en_US exist), so a guest in Pretoria will hear a British-adjacent accent, not a local one. en_GB-cori-medium is chosen because South African English is non-rhotic like RP — much closer than any American voice. This was the sharpest single regression from ElevenLabs, which could do a warm African English. If it matters commercially, this is the line item to spend on: a paid TTS for the voice, everything else stays free.",
   "tts": {
     "engine": "piper",
-    "voice": "en_ZA-tom-medium"
+    "voice": "en_GB-cori-medium"
   },
 
   "tools": [

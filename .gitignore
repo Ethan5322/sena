@@ -9,3 +9,11 @@ node_modules/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# the voice agent's python env (2GB of Torch and Whisper weights)
+.venv/
+__pycache__/
+*.pyc
+
+# demo mode writes every email it "sends" here
+.sena-demo-mail/

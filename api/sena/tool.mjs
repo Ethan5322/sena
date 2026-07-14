@@ -26,41 +26,8 @@
 // ============================================================================
 
 import crypto from 'node:crypto';
-import { createPgDb } from '../../src/db.mjs';
-import { createRouter, ToolError } from '../../src/router.mjs';
-import { createPaystack } from '../../src/adapters/paystack.mjs';
-import { createNotifier } from '../../src/adapters/notifier.mjs';
-
-// Reused across warm invocations; a fresh pool per call exhausts Supabase.
-let cached;
-function services() {
-  if (cached) return cached;
-
-  const db = createPgDb(process.env.DATABASE_URL);
-  const paystack = createPaystack({
-    secretKey: process.env.PAYSTACK_SECRET_KEY,
-    callbackUrl: process.env.PAYSTACK_CALLBACK_URL,
-  });
-  const notifier = createNotifier({
-    host: process.env.SMTP_HOST,
-    port: process.env.SMTP_PORT,
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-    from: process.env.SMTP_FROM,
-  });
-
-  cached = {
-    db,
-    router: createRouter({
-      db,
-      paystack,
-      notifier,
-      defaultHotelId: process.env.SENA_DEFAULT_HOTEL_ID || null,
-      publicUrl: process.env.SENA_PUBLIC_URL || '',
-    }),
-  };
-  return cached;
-}
+import { ToolError } from '../../src/router.mjs';
+import { getServices } from '../../src/services.mjs';
 
 /** Constant-time, so the secret cannot be recovered a byte at a time. */
 export function secretOk(given) {
@@ -101,7 +68,7 @@ export default async function handler(req, res) {
     fromNumber: call.from_number || null,
   };
 
-  const { router } = services();
+  const { router } = getServices();
 
   try {
     if (body.type === 'call-ended') {

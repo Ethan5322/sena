@@ -24,6 +24,9 @@ import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { useServices, getServices } from '../src/services.mjs';
+import { createDemoServices } from '../src/demo.mjs';
+import { applyChargeSuccess } from '../src/payments.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, '..');
@@ -87,11 +90,84 @@ async function readJson(req) {
 
 await loadEnv();
 
+// ── Demo mode ───────────────────────────────────────────────────────────────
+// No DATABASE_URL means you have signed up for nothing, and you should still be
+// able to take a booking end to end. src/demo.mjs stands up a real Postgres
+// in-process with the real schema and the real demo hotel, plus a payment link
+// that actually pays and a mail server that writes to disk.
+//
+// The router on top of it is the SAME router. Every gate you hit here is the
+// gate a guest hits in production.
+const DEMO = !process.env.DATABASE_URL;
+let demo = null;
+
+if (DEMO) {
+  console.log('\n  no DATABASE_URL — starting in DEMO MODE');
+  console.log('  a real Postgres, in-process. Fake money. Mail written to disk.\n');
+  demo = await createDemoServices({ publicUrl: `http://localhost:${PORT}` });
+  useServices(demo);
+  process.env.SENA_DEFAULT_HOTEL_ID ||= demo.hotel.id;
+  process.env.SENA_PUBLIC_URL ||= `http://localhost:${PORT}`;
+  // The agent has to authenticate, and in demo mode there is nobody to keep a
+  // secret from. Fixed, so the agent container can be given the same one.
+  process.env.SENA_WEBHOOK_SECRET ||= 'demo-secret';
+  console.log(`  hotel:  ${demo.hotel.name}  (${demo.hotel.id})`);
+  console.log(`  secret: ${process.env.SENA_WEBHOOK_SECRET}\n`);
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   const route = ROUTES[url.pathname];
 
   vercelRes(res);
+
+  // The demo payment page. Not a Vercel function, and deliberately not one: this
+  // route confirms a booking WITHOUT a signature, and it must be impossible for
+  // it to exist anywhere a real guest could reach it. It lives here, in the dev
+  // server, and nowhere else.
+  if (DEMO && url.pathname === '/demo/pay') {
+    const ref = url.searchParams.get('ref');
+    const { rows } = await demo.db.query(
+      `select p.*, b.reference as booking_ref
+         from sena_payments p join sena_bookings b on b.id = p.booking_id
+        where p.provider_reference = $1`,
+      [ref]
+    );
+    if (!rows.length) {
+      res.setHeader('Content-Type', 'text/html');
+      return res.status(404).send('<h1>No such payment reference</h1>');
+    }
+
+    // The same function the real Paystack webhook calls, on the same row. The
+    // only thing missing is the HMAC — which is the one thing we cannot fake and
+    // would not want to.
+    // Shaped exactly like Paystack's charge.success event, because that is what
+    // applyChargeSuccess parses. Pay the full amount — the underpayment gate is
+    // already attacked in scripts/test-router.mjs.
+    const result = await applyChargeSuccess(demo.db, {
+      event: 'charge.success',
+      data: {
+        reference: ref,
+        amount: Number(rows[0].amount_cents),
+        currency: rows[0].currency,
+      },
+    });
+
+    console.log(`  [demo paystack] PAID ${ref} → ${JSON.stringify(result)}`);
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    return res.status(200).send(
+      `<body style="font:16px system-ui;display:grid;place-items:center;height:100vh;margin:0;background:#F7F5F2">
+         <div style="text-align:center">
+           <div style="font-size:3rem">✓</div>
+           <h1 style="margin:.5rem 0">Payment received</h1>
+           <p style="color:#6B7280">${rows[0].booking_ref} · ${rows[0].currency} ${(Number(rows[0].amount_cents) / 100).toFixed(2)}</p>
+           <p style="color:#B45309;font-size:.85rem;margin-top:2rem">
+             DEMO — no money moved. Tell Sena you have paid.
+           </p>
+         </div>
+       </body>`
+    );
+  }
 
   if (!route) {
     res.statusCode = 404;

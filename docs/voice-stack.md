@@ -216,7 +216,7 @@ feel it at about 900 ms.
 | Knob | Where | Trade |
 |---|---|---|
 | `WHISPER_MODEL` | `.env.local` | `base` is fast and mishears letters. `small` is the floor for a guest spelling an email address. `medium` is better and about twice as slow — worth it on a GPU box. |
-| Piper voice | `PIPER_VOICE` | `medium` voices sound better than `low` and cost ~30 ms. Browse [rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices). |
+| Piper voice | `PIPER_VOICE` | Ships as `en_GB-cori-medium`. **There is no South African voice** — Piper has only `en_GB` and `en_US`, and British RP is the closest fit to non-rhotic SA English. This is the sharpest single regression from ElevenLabs. `medium` beats `low` for ~30 ms. Browse [rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices). |
 | Claude model | `agent-config.json` | Sonnet is chosen for latency, not for economy. A bigger model thinks longer, and on a call a wrong-sounding pause costs more trust than a better sentence buys. |
 | `temperature` | `agent-config.json` | 0.3, and it should stay low. This agent quotes prices and policies; creativity here is a defect. |
 

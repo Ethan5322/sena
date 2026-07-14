@@ -16,14 +16,10 @@
 // Behind the same secret as the tool endpoint, for the same reason.
 // ============================================================================
 
-import { createPgDb } from '../../src/db.mjs';
+import { getServices } from '../../src/services.mjs';
 import { secretOk } from './tool.mjs';
 
-let db;
-function database() {
-  if (!db) db = createPgDb(process.env.DATABASE_URL);
-  return db;
-}
+const database = () => getServices().db;
 
 export default async function handler(req, res) {
   if (!secretOk(req.headers['x-sena-secret'])) {

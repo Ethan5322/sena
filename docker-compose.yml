@@ -59,7 +59,7 @@ services:
       # ── The brain, the ears, the voice ─────────────────────────────────────
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?the only paid thing in this stack}
       WHISPER_MODEL: ${WHISPER_MODEL:-small}
-      PIPER_VOICE: ${PIPER_VOICE:-/voices/en_ZA-tom-medium.onnx}
+      PIPER_VOICE: ${PIPER_VOICE:-/voices/en_GB-cori-medium.onnx}
 
       SENA_ALLOWED_ORIGINS: ${SENA_ALLOWED_ORIGINS:-*}
     extra_hosts:

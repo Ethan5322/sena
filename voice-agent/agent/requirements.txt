@@ -12,18 +12,36 @@
 #   whisper  → faster-whisper, local STT
 #   silero   → voice activity detection (knowing when the guest stopped talking)
 #   anthropic→ Claude, the brain
-pipecat-ai[livekit,whisper,silero,anthropic]~=0.0.60
+#
+# EXACT PIN, and it is not paranoia. bot.py was first written against the 0.0.x
+# API and every one of these moved by 1.5:
+#
+#   OpenAILLMContext            → LLMContext          (different module)
+#   llm.create_context_aggregator → LLMContextAggregatorPair
+#   pipecat.transports.services.livekit → pipecat.transports.livekit.transport
+#   WhisperSTTService(language="en")    → language=Language.EN   (an enum; the
+#                                         string is accepted and then ignored)
+#
+# scripts/test-agent-imports.py is what proves this file and bot.py still agree.
+# Run it after any bump — it takes two seconds and it is the difference between
+# finding this on your laptop and finding it with a guest on the line.
+pipecat-ai[livekit,whisper,silero,anthropic]==1.5.0
+
+# Piper — Sena's voice. Installs as a pip package with a `piper` console script,
+# so there is no binary to download and no platform-specific release to track. It
+# pulls its own onnxruntime. piper_tts.py drives it as a subprocess.
+piper-tts~=1.4
 
 # Minting LiveKit tokens for the guest and the bot (server.py).
-livekit-api~=0.8
+livekit-api~=1.0
 
 # The switchboard.
-fastapi~=0.115
-uvicorn[standard]~=0.32
+fastapi~=0.139
+uvicorn[standard]~=0.34
 
 # Talking to the Node router. The agent's ONLY route to the database — it has no
 # Postgres driver here, and that is deliberate: see sena_client.py.
-httpx~=0.27
+httpx~=0.28
 
 # NOT HERE, ON PURPOSE:
 #   elevenlabs   — replaced by Piper, which we drive as a subprocess (piper_tts.py)

@@ -135,6 +135,20 @@ this test makes them agree:
     or "recorded", because both are legal requirements (§0, POPIA) and both live in
     a string that is very easy to edit.
 
+**Over the wire** (`npm run test:e2e`) — the other suites call the router directly.
+This one refuses to. It boots the dev server and books a room the way the voice
+agent does: a POST per tool, with the secret header, through the envelope.
+
+11. **A whole booking happens over HTTP.** Availability → hold → *refuse the guest
+    who was not double-confirmed* → save → pay → *refuse to confirm before the money
+    lands* → issue the QR → cancel without promising a refund. Twenty-five
+    assertions, end to end.
+
+    This catches the class of bug the unit tests cannot see: the secret header
+    spelled differently on each side, a field lost in the envelope, `hotel_id` never
+    reaching `resolveHotelId`, a result in a shape the model cannot read. Every one
+    of those passes `npm test` and fails on a call to a real guest.
+
 ---
 
 ## The guest ID, and the front desk
@@ -196,7 +210,7 @@ milliseconds worse per turn — noticeable, survivable, and erased by a GPU.
 
 ```bash
 npm install
-npm test            # five suites: schema, install, router, card, tools
+npm test            # six suites — the last one is a whole booking, over HTTP
 ```
 
 To actually talk to her, two terminals:
@@ -205,6 +219,17 @@ To actually talk to her, two terminals:
 npm run dev         # the brain:  router, gates, database   → :3000
 npm run voice       # the voice:  LiveKit + Whisper + Piper → :8080
 ```
+
+**`npm run dev` needs nothing signed up for.** With no `DATABASE_URL` it starts in
+**demo mode**: a real Postgres in-process (PGlite, running the real
+`sena-all-in-one.sql`, seeded with the demo hotel), a payment link that actually
+pays, and a mail server that writes every email to `.sena-demo-mail/` as an HTML
+file you can open. The router on top is the *same router* — every gate you hit on
+your laptop is the gate a guest hits in production.
+
+That is what makes the booking path testable without a Supabase project, a Paystack
+account and a Gmail app password. A system nobody can run end-to-end is a system
+whose first real execution happens in front of a guest.
 
 Then open **http://localhost:8080** and click *Call Reception*. Full guide,
 including macOS/Windows/Linux install and what to do when the call connects but

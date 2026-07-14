@@ -8,12 +8,15 @@
         "dev": "node scripts/dev-server.mjs",
         "voice": "docker compose up --build",
         "samples": "node scripts/render-sample.cjs",
-        "test": "npm run test:db && npm run test:install && npm run test:router && npm run test:card && npm run test:tools",
+        "test": "npm run test:db && npm run test:install && npm run test:router && npm run test:card && npm run test:tools && npm run test:e2e && npm run test:agent",
         "test:db": "node scripts/test-schema.mjs",
         "test:install": "node scripts/test-install.mjs",
         "test:router": "node scripts/test-router.mjs",
         "test:card": "node scripts/test-card.mjs",
         "test:tools": "node scripts/test-tools.mjs",
+        "test:e2e": "node scripts/test-booking-e2e.mjs",
+        "test:agent": "node scripts/test-agent.mjs",
+        "test:voice": "node scripts/test-agent.mjs --voice",
         "build:install": "node scripts/build-install.mjs"
     },
     "devDependencies": {

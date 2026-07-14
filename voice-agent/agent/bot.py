@@ -45,10 +45,12 @@ from pipecat.frames.frames import EndFrame, TTSSpeakFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
-from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
+from pipecat.processors.aggregators.llm_context import LLMContext
+from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
 from pipecat.services.anthropic.llm import AnthropicLLMService
 from pipecat.services.whisper.stt import WhisperSTTService
-from pipecat.transports.services.livekit import LiveKitParams, LiveKitTransport
+from pipecat.transcriptions.language import Language
+from pipecat.transports.livekit.transport import LiveKitParams, LiveKitTransport
 
 from config import AgentConfig, Settings, render_system_prompt
 from piper_tts import PiperTTSService
@@ -99,9 +101,12 @@ async def run_bot(room: str, hotel_id: str, token: str) -> None:
     # Local Whisper. 'small' is the floor: 'base' mishears letters, and a guest
     # spelling out an email address into a model that hears "m" as "n" produces a
     # booking that never reaches them.
+    #
+    # `language` is Pipecat's Language enum, not a string — passing "en" here is
+    # accepted silently and then ignored, which is the worst kind of wrong.
     stt = WhisperSTTService(
         model=settings.whisper_model or cfg.stt_model,
-        language=cfg.stt_language,
+        language=Language(cfg.stt_language),
     )
 
     tts = PiperTTSService(
@@ -169,14 +174,14 @@ async def run_bot(room: str, hotel_id: str, token: str) -> None:
     # The greeting goes in as an assistant turn even though the model did not
     # generate it (see below), because a model that does not know it already said
     # hello will say hello again.
-    context = OpenAILLMContext(
+    context = LLMContext(
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "assistant", "content": greeting},
         ],
         tools=tools,
     )
-    aggregator = llm.create_context_aggregator(context)
+    aggregator = LLMContextAggregatorPair(context)
 
     pipeline = Pipeline(
         [
