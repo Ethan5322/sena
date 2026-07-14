@@ -22,19 +22,50 @@ Write-Host ""
 Write-Host "Sena — live call preflight" -ForegroundColor Cyan
 Write-Host ""
 
-# ── 1. The API key ──────────────────────────────────────────────────────────
+# ── 1. The brain ────────────────────────────────────────────────────────────
+# Two ways to have one: LLM_PROVIDER=ollama (free, local, slow on this laptop)
+# or LLM_PROVIDER=anthropic plus a key. Whichever .env.local says, verify it.
 if (-not (Test-Path .env.local)) {
     Bad ".env.local does not exist. Copy .env.example and fill it in."
     exit 1
 }
 $envText = Get-Content .env.local -Raw
-if ($envText -match 'PASTE-YOUR-KEY-HERE') {
-    Bad "your Anthropic API key is not in .env.local yet."
-    Say "Open .env.local, replace PASTE-YOUR-KEY-HERE with your key from"
-    Say "console.anthropic.com -> API keys, save, and run 'npm run call' again."
+$usingOllama = $envText -match '(?m)^\s*LLM_PROVIDER\s*=\s*ollama'
+
+if ($usingOllama) {
+    $ollamaUp = $false
+    try {
+        $r = Invoke-WebRequest -Uri "http://localhost:11434/api/tags" -UseBasicParsing -TimeoutSec 3
+        if ($r.StatusCode -eq 200) { $ollamaUp = $true }
+    } catch { }
+    if (-not $ollamaUp) {
+        # Installed but not running is the common case — it starts on login
+        # normally, but not on the login where it was first installed.
+        $exe = "$env:LOCALAPPDATA\Programs\Ollama\ollama app.exe"
+        if (Test-Path $exe) {
+            Say "Ollama is installed but not running - starting it..."
+            Start-Process $exe
+            Start-Sleep -Seconds 8
+            try {
+                $r = Invoke-WebRequest -Uri "http://localhost:11434/api/tags" -UseBasicParsing -TimeoutSec 3
+                if ($r.StatusCode -eq 200) { $ollamaUp = $true }
+            } catch { }
+        }
+    }
+    if (-not $ollamaUp) {
+        Bad "LLM_PROVIDER is ollama but Ollama is not running and could not be started."
+        Say "Install it (winget install Ollama.Ollama), then run 'npm run call' again."
+        exit 1
+    }
+    Good "brain: Ollama, free and local (expect slow replies on this machine)"
+} elseif ($envText -match 'PASTE-YOUR-KEY-HERE' -or $envText -match '(?m)^\s*ANTHROPIC_API_KEY\s*=\s*$') {
+    Bad "LLM_PROVIDER is anthropic but no API key is in .env.local."
+    Say "Either paste your key from console.anthropic.com -> API keys,"
+    Say "or set LLM_PROVIDER=ollama to test free without one."
     exit 1
+} else {
+    Good "brain: Claude (API key is filled in)"
 }
-Good "API key is filled in"
 
 # ── 2. Has the machine been rebooted since WSL was installed? ───────────────
 wsl.exe --status *> $null

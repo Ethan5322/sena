@@ -48,6 +48,7 @@ from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
 from pipecat.services.anthropic.llm import AnthropicLLMService
+from pipecat.services.ollama.llm import OLLamaLLMService
 from pipecat.services.whisper.stt import WhisperSTTService
 from pipecat.transcriptions.language import Language
 from pipecat.transports.livekit.transport import LiveKitParams, LiveKitTransport
@@ -114,14 +115,31 @@ async def run_bot(room: str, hotel_id: str, token: str) -> None:
         piper_binary=settings.piper_binary,
     )
 
-    llm = AnthropicLLMService(
-        api_key=settings.anthropic_api_key,
-        model=cfg.model,
-        params=AnthropicLLMService.InputParams(
-            temperature=cfg.temperature,
-            max_tokens=cfg.max_tokens,
-        ),
-    )
+    # The brain. Claude in production; a free local model through Ollama when
+    # there is no API key yet. Same tools, same context, same pipeline — the
+    # provider is one constructor. Both take temperature 0.3, because this agent
+    # quotes prices and policies and creativity here is a defect regardless of
+    # who is thinking.
+    if settings.llm_provider == "ollama":
+        log.warning(
+            "brain: OLLAMA (%s) — free and local. Expect slow turns on a small "
+            "CPU and clumsy tool use. This proves the plumbing, not the product.",
+            settings.ollama_model,
+        )
+        llm = OLLamaLLMService(
+            model=settings.ollama_model,
+            base_url=settings.ollama_base_url,
+            params=OLLamaLLMService.InputParams(temperature=cfg.temperature),
+        )
+    else:
+        llm = AnthropicLLMService(
+            api_key=settings.anthropic_api_key,
+            model=cfg.model,
+            params=AnthropicLLMService.InputParams(
+                temperature=cfg.temperature,
+                max_tokens=cfg.max_tokens,
+            ),
+        )
 
     # ── The eleven tools ────────────────────────────────────────────────────
     # Registered from agent-config.json, so the names the model can call and the

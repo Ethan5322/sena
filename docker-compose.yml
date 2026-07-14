@@ -59,7 +59,14 @@ services:
       LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-secret-at-least-32-characters-long}
 
       # ── The brain, the ears, the voice ─────────────────────────────────────
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?the only paid thing in this stack}
+      # LLM_PROVIDER=anthropic needs the key; LLM_PROVIDER=ollama needs Ollama
+      # running on the host (it is a native app, outside docker, so the small
+      # model is not fighting the containers for the WSL VM's memory). The
+      # container reaches it through host.docker.internal.
+      LLM_PROVIDER: ${LLM_PROVIDER:-anthropic}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2:1b}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
       WHISPER_MODEL: ${WHISPER_MODEL:-small}
       PIPER_VOICE: ${PIPER_VOICE:-/voices/en_GB-cori-medium.onnx}
 
