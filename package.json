@@ -5,6 +5,7 @@
     "description": "Sena — AI voice front-desk receptionist for hotels. Built by MuleSoo Digital Services.",
     "type": "commonjs",
     "scripts": {
+        "call": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/live-test.ps1",
         "dev": "node scripts/dev-server.mjs",
         "voice": "docker compose --env-file .env.local up --build",
         "samples": "node scripts/render-sample.cjs",
