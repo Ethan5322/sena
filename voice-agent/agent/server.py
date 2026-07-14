@@ -96,31 +96,39 @@ async def reception() -> FileResponse:
     return FileResponse(WEB_DIR / "reception.html")
 
 
-async def _hotel_exists(settings: Settings, hotel_id: str) -> bool:
-    """Ask the API, because the browser is not a source of truth about anything."""
+async def _resolve_hotel(settings: Settings, hotel_id: str | None) -> str:
+    """
+    Ask the API which hotel this is — the browser is not a source of truth about
+    anything, and neither is this box's environment.
+
+    Called WITHOUT a hotel_id, the API answers with its own default (in demo mode
+    that is the demo hotel, whose id is minted fresh at every `npm run dev` and so
+    cannot be pinned in any env file). Called WITH one, the API either confirms it
+    exists or 404s. Either way, the id we put in the room is one the API vouched
+    for.
+    """
     async with httpx.AsyncClient(timeout=10) as http:
         r = await http.get(
             f"{settings.sena_api_url.rstrip('/')}/api/sena/hotel",
-            params={"hotel_id": hotel_id},
+            params={"hotel_id": hotel_id} if hotel_id else None,
             headers={"x-sena-secret": settings.sena_secret},
         )
     if r.status_code == 401:
         raise HTTPException(500, "the switchboard's secret does not match the API")
-    return r.status_code == 200
+    if r.status_code != 200:
+        # Loudly. A reception line that answers for a hotel that does not exist is
+        # worse than one that does not answer.
+        raise HTTPException(404, f"unknown hotel: {hotel_id or '(no default either)'}")
+    return r.json()["hotel_id"]
 
 
 @app.post("/connect")
 async def connect(req: ConnectRequest) -> dict:
     settings: Settings = app.state.settings
 
-    hotel_id = req.hotel_id or settings.default_hotel_id
-    if not hotel_id:
-        raise HTTPException(400, "no hotel_id, and no SENA_DEFAULT_HOTEL_ID to fall back to")
-
-    if not await _hotel_exists(settings, hotel_id):
-        # Loudly. A reception line that answers for a hotel that does not exist is
-        # worse than one that does not answer.
-        raise HTTPException(404, f"unknown hotel: {hotel_id}")
+    hotel_id = await _resolve_hotel(
+        settings, req.hotel_id or settings.default_hotel_id or None
+    )
 
     room = f"sena-{secrets.token_urlsafe(9)}"
 
