@@ -163,6 +163,23 @@ to a scannable card. The booking works; the check-in doesn't.
 
 ---
 
+### Why vercel.json looks the way it does
+
+(JSON allows no comments and Vercel rejects `$comment` properties, so the
+reasoning lives here instead.)
+
+- **`includeFiles`** — the card and front-desk pages read the HTML template,
+  the brand fonts and four npm dist files (jsqr, jsbarcode, html2canvas, jspdf)
+  off disk at request time. Vercel's bundler only traces static imports; it
+  cannot see a path built at runtime, so without this line those files are left
+  out of the deployment and the card 500s in production while rendering
+  perfectly on a laptop.
+- **`crons` at 06:00 UTC** — 08:00 in Johannesburg: the owner's arrivals list
+  lands before the front desk opens. One daily cron is all the free tier allows
+  and all this needs — expiring abandoned holds is deliberately NOT scheduled,
+  because `check_availability` does it on every call; the system stays correct
+  even if the cron never runs.
+
 ## 6. The webhook secret (10 seconds)
 
 ```bash

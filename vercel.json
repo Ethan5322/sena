@@ -1,28 +1,12 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
 
-  "$comment": [
-    "The card and the front-desk page read the HTML template, the brand fonts and",
-    "two npm dist files off disk at request time. Vercel's bundler traces static",
-    "imports; it cannot see a path built at runtime, so those files would be left",
-    "out of the deployment and the card would 500 in production while rendering",
-    "perfectly on a laptop. includeFiles is what stops that."
-  ],
-
   "functions": {
     "api/**/*.mjs": {
       "includeFiles": "{templates,assets,node_modules/jsqr/dist,node_modules/jsbarcode/dist,node_modules/html2canvas/dist,node_modules/jspdf/dist}/**"
     }
   },
 
-  "$crons_comment": [
-    "06:00 UTC is 08:00 in Johannesburg — the owner's arrivals list lands before",
-    "the front desk opens, and tomorrow's guests get their reminder at a civilised",
-    "hour. Vercel's free tier allows one daily cron, which is all this needs:",
-    "expiring an abandoned hold is deliberately NOT on this schedule, because",
-    "check_availability does it on every call. The system stays correct even if",
-    "this cron never runs at all."
-  ],
   "crons": [{ "path": "/api/sena/cron", "schedule": "0 6 * * *" }],
 
   "headers": [
