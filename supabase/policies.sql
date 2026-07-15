@@ -161,3 +161,7 @@ revoke all on function sena_check_availability(uuid, date, date, int) from publi
 revoke all on function sena_hold_room(uuid, uuid, date, date, int, uuid)  from public, anon;
 revoke all on function sena_knock_out_guest_id(text, text)                from public, anon;
 revoke all on function sena_expire_stale_holds()                          from public, anon;
+-- Self check-in is driven by the API (service_role) — the browser talks to
+-- /api/sena/checkin, never to the database. The photo purge is the cron's job.
+revoke all on function sena_self_check_in(text, text, text)               from public, anon;
+revoke all on function sena_expire_ended_guest_ids()                      from public, anon;

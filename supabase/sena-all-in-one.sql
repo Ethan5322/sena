@@ -210,7 +210,11 @@ create index if not exists sena_bookings_room_dates_idx on sena_bookings(room_id
 create index if not exists sena_bookings_hotel_status_idx on sena_bookings(hotel_id, status);
 
 -- ── sena_guest_ids ───────────────────────────────────────────────────────────────
--- §7: the QR Guest ID. Single use. Scanned once at the desk, then dead forever.
+-- §7: the QR Guest ID. Single use. The verification number is spent exactly once
+-- — at the desk (staff scan) or by the guest themselves (self check-in with a
+-- photo). After that the card lives on as the in-stay photo pass until check-out,
+-- when it expires and the photo is purged (POPIA: biometric data is not kept one
+-- day longer than the stay it verified).
 create table if not exists sena_guest_ids (
   id                  uuid primary key default gen_random_uuid(),
   booking_id          uuid not null unique references sena_bookings(id) on delete cascade,
@@ -221,6 +225,13 @@ create table if not exists sena_guest_ids (
   used_by             text,                              -- which staff device knocked it out
   created_at          timestamptz not null default now()
 );
+
+-- The guest's photo, captured at self check-in. A data URI (image/jpeg), never a
+-- card number's worth of risk: it is deleted automatically the day the stay ends
+-- (sena_expire_ended_guest_ids). Kept in the row rather than a storage bucket so
+-- the demo needs no extra service and a purge is one UPDATE, not a bucket sweep.
+alter table sena_guest_ids add column if not exists photo          text;
+alter table sena_guest_ids add column if not exists photo_taken_at timestamptz;
 
 -- ── sena_payments ────────────────────────────────────────────────────────────────
 -- Paystack in ZAR (decision §0.0). No card data ever lands here — the gateway
@@ -452,6 +463,136 @@ begin
 end;
 $$;
 
+-- ── sena_self_check_in: the guest checks themselves in (§2 stage 11) ─────────
+-- The guest arrives, opens the reception page, chooses "I have a booking",
+-- types the verification code from their confirmation email, and takes a photo.
+-- This is that moment, as one atomic decision:
+--
+--   * the code must exist and still be active (single use, same as the desk)
+--   * the booking must be PAID — a code only exists after payment, but the
+--     booking may have been cancelled since, and a cancelled stay must not
+--     walk in
+--   * it must be arrival day or later, hotel-local time — a code is not a key
+--     to the building a week early
+--   * the stay must not already be over
+--   * a photo is REQUIRED — the whole point of self check-in is that the card
+--     the guest carries for the rest of the stay shows their face
+--
+-- On success the code is burned (status → used, exactly like a desk scan, and
+-- the same race rules apply: the row is locked, two devices cannot both win),
+-- the photo is attached, and the booking flips to checked_in. The card page
+-- then renders as the in-stay photo pass, valid until check-out.
+create or replace function sena_self_check_in(
+  p_verification_number text,
+  p_photo               text,
+  p_device              text default 'guest-self-checkin'
+) returns table (ok boolean, reason text, booking_reference text, guest_name text, check_out date)
+language plpgsql
+as $$
+declare
+  v_id      sena_guest_ids%rowtype;
+  v_booking sena_bookings%rowtype;
+  v_guest   sena_guests%rowtype;
+  v_today   date;
+begin
+  -- Lock the credential row: the same code typed on two phones at the same
+  -- second must produce one check-in and one honest refusal.
+  select gi.* into v_id
+    from sena_guest_ids gi
+   where gi.verification_number = p_verification_number
+     for update;
+
+  if not found then
+    return query select false, 'unknown code', null::text, null::text, null::date;
+    return;
+  end if;
+
+  if v_id.status <> 'active' then
+    return query select false,
+      case when v_id.status = 'used'
+           then 'already checked in at ' || coalesce(v_id.used_at::text, 'unknown time')
+           else 'this code has expired' end,
+      null::text, null::text, null::date;
+    return;
+  end if;
+
+  select b.* into v_booking from sena_bookings b where b.id = v_id.booking_id;
+
+  -- "Today" at the HOTEL, not in UTC — around midnight those differ, and a
+  -- guest standing in the lobby at 00:30 must not be told to come back tomorrow.
+  select (now() at time zone h.timezone)::date into v_today
+    from sena_hotels h where h.id = v_booking.hotel_id;
+
+  if v_booking.status = 'cancelled' then
+    return query select false, 'this booking was cancelled', v_booking.reference, null::text, null::date;
+    return;
+  end if;
+
+  -- A guest_id row only exists once money landed, so anything not confirmed
+  -- here is a lifecycle surprise — refuse and let a human look.
+  if v_booking.status <> 'confirmed' then
+    return query select false, 'booking is ' || v_booking.status || ' — please see the front desk',
+                        v_booking.reference, null::text, null::date;
+    return;
+  end if;
+
+  if v_today < v_booking.check_in then
+    return query select false, 'too early — check-in opens on ' || v_booking.check_in::text,
+                        v_booking.reference, null::text, null::date;
+    return;
+  end if;
+
+  if v_today > v_booking.check_out then
+    return query select false, 'the stay dates for this booking have passed',
+                        v_booking.reference, null::text, null::date;
+    return;
+  end if;
+
+  if p_photo is null or length(p_photo) < 100 then
+    return query select false, 'a photo is required to issue the guest ID',
+                        v_booking.reference, null::text, null::date;
+    return;
+  end if;
+
+  update sena_guest_ids
+     set status = 'used', used_at = now(), used_by = p_device,
+         photo = p_photo, photo_taken_at = now()
+   where id = v_id.id;
+
+  update sena_bookings set status = 'checked_in', updated_at = now()
+   where id = v_booking.id;
+
+  select g.* into v_guest from sena_guests g where g.id = v_booking.guest_id;
+
+  return query select true, 'checked in', v_booking.reference,
+                      coalesce(v_guest.full_name, ''), v_booking.check_out;
+end;
+$$;
+
+-- ── sena_expire_ended_guest_ids: the pass dies with the stay ─────────────────
+-- Run daily (api/sena/cron.mjs). Two promises kept in one statement:
+--   1. §7 — an ID is worthless after the stay: status → expired.
+--   2. §9 / POPIA — the guest's photo is BIOMETRIC personal information. It is
+--      deleted the day after check-out (or the moment a booking is cancelled),
+--      automatically, without anyone remembering to. Booking records stay, per
+--      the retention policy; the face does not.
+create or replace function sena_expire_ended_guest_ids() returns int
+language sql
+as $$
+  with ended as (
+    update sena_guest_ids gi
+       set status = 'expired', photo = null, photo_taken_at = null
+      from sena_bookings b
+      join sena_hotels h on h.id = b.hotel_id
+     where b.id = gi.booking_id
+       and (gi.status <> 'expired' or gi.photo is not null)
+       and ( (now() at time zone h.timezone)::date > b.check_out
+          or b.status in ('cancelled', 'expired') )
+    returning 1
+  )
+  select coalesce(count(*), 0)::int from ended;
+$$;
+
 -- ── updated_at housekeeping ─────────────────────────────────────────────────
 create or replace function sena_touch_updated_at() returns trigger
 language plpgsql as $$
@@ -633,6 +774,10 @@ revoke all on function sena_check_availability(uuid, date, date, int) from publi
 revoke all on function sena_hold_room(uuid, uuid, date, date, int, uuid)  from public, anon;
 revoke all on function sena_knock_out_guest_id(text, text)                from public, anon;
 revoke all on function sena_expire_stale_holds()                          from public, anon;
+-- Self check-in is driven by the API (service_role) — the browser talks to
+-- /api/sena/checkin, never to the database. The photo purge is the cron's job.
+revoke all on function sena_self_check_in(text, text, text)               from public, anon;
+revoke all on function sena_expire_ended_guest_ids()                      from public, anon;
 
 
 -- ============================================================================

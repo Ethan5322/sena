@@ -46,7 +46,7 @@ async function logSent(db, bookingId, channel, recipient, template, sent) {
 }
 
 export async function runDailyJobs(db, notifier) {
-  const result = { expired: 0, completed: 0, reminded: 0, summaries: 0 };
+  const result = { expired: 0, completed: 0, purged: 0, reminded: 0, summaries: 0 };
 
   // ── 1. Abandoned holds ────────────────────────────────────────────────────
   // Availability already ignores a lapsed hold, so no room was ever lost. But
@@ -67,6 +67,13 @@ export async function runDailyJobs(db, notifier) {
       returning id`
   );
   result.completed = comp.length;
+
+  // ── 2b. Passes that outlived their stay ───────────────────────────────────
+  // The in-stay photo ID dies with the stay: status → expired, and the guest's
+  // photo — biometric personal information under POPIA — is DELETED, not kept.
+  // Nobody has to remember to do this; that is the point of it being here.
+  const { rows: purged } = await db.query(`select sena_expire_ended_guest_ids() as n`);
+  result.purged = Number(purged[0].n);
 
   // ── 3. Pre-arrival reminders (§2 stage 10) ────────────────────────────────
   const { rows: arriving } = await db.query(
