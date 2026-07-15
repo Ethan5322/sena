@@ -33,9 +33,10 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import HTMLResponse
+import json
 from livekit import api
 from pydantic import BaseModel
 
@@ -91,9 +92,24 @@ async def health() -> dict:
 
 
 @app.get("/")
-async def reception() -> FileResponse:
-    """The 'Call Reception' page. In production this lives on the hotel's site."""
-    return FileResponse(WEB_DIR / "reception.html")
+async def reception(request: Request) -> HTMLResponse:
+    """The 'Call Reception' page. In production this lives on the hotel's site.
+
+    The page carries a second door — "check in with your code" — and that page
+    lives on the API, not on this box. This container knows the API as
+    host.docker.internal, an address that means nothing to the guest's phone,
+    so the hostname the GUEST used to reach us is substituted in: a laptop gets
+    localhost, a phone on the WiFi gets the PC's LAN IP, and a deployed box
+    gets its public name. Override with SENA_CHECKIN_URL when the API has a
+    proper address of its own (the Vercel case).
+    """
+    html = (WEB_DIR / "reception.html").read_text(encoding="utf-8")
+    checkin = os.environ.get("SENA_CHECKIN_URL") or (
+        f"{app.state.settings.sena_api_url.rstrip('/')}/api/sena/checkin"
+    )
+    checkin = checkin.replace("host.docker.internal", request.url.hostname or "localhost")
+    inject = f"<script>window.SENA_CHECKIN_URL = {json.dumps(checkin)};</script>"
+    return HTMLResponse(html.replace("</head>", inject + "\n</head>", 1))
 
 
 async def _resolve_hotel(settings: Settings, hotel_id: str | None) -> str:

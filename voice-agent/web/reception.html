@@ -40,6 +40,18 @@
     button:disabled { opacity: .45; cursor: not-allowed; }
     button.hangup { background: #B42318; }
 
+    /* Option B: the arriving guest. Quieter than the call button on purpose —
+       most visitors are here to talk, and two equally loud buttons make both
+       harder to choose. */
+    .alt {
+      display: block; margin-top: .9rem; padding: .95rem 1.25rem;
+      border: 1px solid #D6D9E0; border-radius: 999px;
+      color: var(--ink); background: #fff; text-decoration: none;
+      font-size: .98rem; font-weight: 600;
+      transition: transform .08s ease;
+    }
+    .alt:hover { transform: translateY(-1px); }
+
     .status {
       margin-top: 1.5rem; min-height: 1.5rem;
       font-size: .9rem; color: #6B7280;
@@ -75,6 +87,17 @@
     <p class="sub">Speak to Sena about a room, a booking, or anything else.</p>
 
     <button id="call">Call Reception</button>
+
+    <!--
+      Option B — the guest who already booked and is standing in the lobby.
+      They enter the check-in code from their confirmation email, add a photo,
+      and their guest ID is issued on the spot. The URL is injected by whatever
+      serves this page (the switchboard sets window.SENA_CHECKIN_URL); the
+      fallback assumes the page lives on the same origin as the API, which is
+      the Vercel case.
+    -->
+    <a id="checkin" class="alt" href="/api/sena/checkin">Arriving today? Check in with your code</a>
+
     <p class="status" id="status">&nbsp;</p>
 
     <!--
@@ -92,6 +115,10 @@
   <script>
     const SWITCHBOARD = window.SENA_SWITCHBOARD || '';   // same origin by default
     const HOTEL_ID    = window.SENA_HOTEL_ID    || null; // null → the server's default
+
+    // The check-in page lives on the API, which is usually a different origin
+    // to this page. The switchboard injects the right URL when it serves us.
+    if (window.SENA_CHECKIN_URL) document.getElementById('checkin').href = window.SENA_CHECKIN_URL;
 
     const button = document.getElementById('call');
     const status = document.getElementById('status');
