@@ -108,9 +108,11 @@ export function createNotifier({ host, port, user, pass, from }) {
       });
     },
 
-    /** The guest ID. The link IS the card — it carries the QR the desk scans. */
+    /** The guest ID. The link IS the card — and the CODE is the door: typed at
+     *  the self check-in page on arrival, or scanned as the QR at the desk. */
     async sendConfirmation({ to, pkg }) {
       const a = pkg.hotel.brand_accent;
+      const code = pkg.guest_id.verification_number;
       const dates =
         `${pkg.booking.check_in} from ${String(pkg.hotel.check_in_time).slice(0, 5)} — ` +
         `${pkg.booking.check_out} by ${String(pkg.hotel.check_out_time).slice(0, 5)}`;
@@ -122,8 +124,12 @@ export function createNotifier({ host, port, user, pass, from }) {
           `${pkg.hotel.name} — you're confirmed.\n\n` +
           `Reference: ${pkg.booking.reference}\nGuest: ${pkg.guest.full_name}\n${dates}\n` +
           `Paid: ${money(pkg)}\n\n` +
+          `YOUR CHECK-IN CODE: ${code}\n\n` +
+          `When you arrive, open the hotel's reception page, choose "check in with ` +
+          `your code", enter the code above and take a quick photo — your photo ` +
+          `guest ID is issued on the spot. It works once, and stays valid until check-out.\n\n` +
           (pkg.card_url
-            ? `Your guest ID — open this at the front desk:\n${pkg.card_url}\n\nIt works once.`
+            ? `Prefer the front desk? Open your guest ID and show the QR:\n${pkg.card_url}`
             : `Guest ID: ${pkg.guest_id.guest_id_number}`) +
           (pkg.confirmation_url
             ? `\n\nYour booking confirmation (print or save as PDF):\n${pkg.confirmation_url}`
@@ -141,9 +147,20 @@ export function createNotifier({ host, port, user, pass, from }) {
              <tr><td style="padding:.4rem 0;color:#6B7280">Paid</td>
                  <td style="padding:.4rem 0;text-align:right">${esc(money(pkg))}</td></tr>
            </table>
+
+           <p style="margin:1.6rem 0 .4rem;font-size:.8rem;letter-spacing:.08em;
+                     text-transform:uppercase;color:#6B7280">Your check-in code</p>
+           <p style="margin:0;padding:.9rem 1rem;background:#F3F4F6;border-radius:10px;
+                     text-align:center;font:700 1.5rem/1.2 ui-monospace,Consolas,monospace;
+                     letter-spacing:.25em">${esc(code)}</p>
+           <p style="font-size:.85rem;color:#6B7280;margin-top:.6rem">
+             When you arrive, open the hotel's reception page, choose
+             <strong>check in with your code</strong>, enter this code and take a
+             quick photo — your photo guest ID is issued on the spot. It works
+             once, and stays valid until check-out.</p>
            ${
              pkg.card_url
-               ? `<p style="margin-top:1.5rem">Open your guest ID at the front desk and show the QR code.</p>
+               ? `<p style="margin-top:1.5rem">Prefer the front desk? Open your guest ID and show the QR.</p>
                   ${button(a, pkg.card_url, 'Open my guest ID')}
                   <p style="font-size:.8rem;color:#6B7280">It can only be scanned once.</p>`
                : `<p>Guest ID: <strong>${esc(pkg.guest_id.guest_id_number)}</strong></p>`

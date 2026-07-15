@@ -99,6 +99,8 @@ export async function createDemoServices({ publicUrl = 'http://localhost:3000' }
     async sendConfirmation({ to, pkg }) {
       return write('confirmation', to, `Confirmed — ${pkg.booking.reference}`,
         `<p>Booking ${pkg.booking.reference} confirmed.</p>` +
+        `<p>CHECK-IN CODE: <strong style="font-family:monospace;font-size:1.3em">${pkg.guest_id.verification_number}</strong><br>` +
+        `Enter it on the reception page when you arrive (with a quick photo), or show the QR at the desk.</p>` +
         (pkg.card_url ? `<p>Your guest ID: <a href="${pkg.card_url}">${pkg.card_url}</a></p>` : '') +
         (pkg.confirmation_url
           ? `<p>Your booking confirmation (print/PDF): <a href="${pkg.confirmation_url}">${pkg.confirmation_url}</a></p>`
