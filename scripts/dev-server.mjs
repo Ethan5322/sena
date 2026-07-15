@@ -26,7 +26,11 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { useServices, getServices } from '../src/services.mjs';
 import { createDemoServices } from '../src/demo.mjs';
-import { applyChargeSuccess, notifyPaymentLanded } from '../src/payments.mjs';
+import {
+  applyChargeSuccess,
+  notifyPaymentLanded,
+  issueConfirmationPackage,
+} from '../src/payments.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, '..');
@@ -163,8 +167,15 @@ const server = http.createServer(async (req, res) => {
 
     console.log(`  [demo paystack] PAID ${ref} → ${JSON.stringify(result)}`);
     if (result.outcome === 'confirmed') {
-      // Same owner ping the production webhook sends, through the demo notifier.
+      // Same owner ping + automatic guest confirmation the production webhook
+      // sends, through the demo notifier.
       await notifyPaymentLanded(demo.db, demo.notifier, result.reference);
+      await issueConfirmationPackage(
+        demo.db,
+        demo.notifier,
+        result.reference,
+        process.env.SENA_PUBLIC_URL || ''
+      );
     }
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     return res.status(200).send(

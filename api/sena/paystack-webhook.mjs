@@ -15,7 +15,11 @@
 
 import crypto from 'node:crypto';
 import { getServices } from '../../src/services.mjs';
-import { applyChargeSuccess, notifyPaymentLanded } from '../../src/payments.mjs';
+import {
+  applyChargeSuccess,
+  notifyPaymentLanded,
+  issueConfirmationPackage,
+} from '../../src/payments.mjs';
 
 export const config = {
   // The HMAC is computed over the RAW bytes. Let Vercel parse the body first and
@@ -70,6 +74,21 @@ export default async function handler(req, res) {
       // §8: the owner hears about money the moment it lands — WhatsApp +
       // email. 'confirmed' fires exactly once per booking, so this does too.
       await notifyPaymentLanded(database(), getServices().notifier, result.reference);
+
+      // And the GUEST's confirmation — the check-in code, the card link — goes
+      // out automatically, right now. The guest must never depend on the call
+      // still being live, or on anyone remembering: money in, code out.
+      try {
+        const pkg = await issueConfirmationPackage(
+          database(),
+          getServices().notifier,
+          result.reference,
+          process.env.SENA_PUBLIC_URL || ''
+        );
+        if (!pkg.ok) console.error(`[sena] auto-confirmation not issued: ${pkg.reason}`, result);
+      } catch (err) {
+        console.error('[sena] auto-confirmation failed:', err);
+      }
     }
     return res.status(200).json(result);
   } catch (err) {

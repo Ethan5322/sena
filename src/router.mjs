@@ -35,6 +35,7 @@
 
 import crypto from 'node:crypto';
 import { cents, toMajor } from './db.mjs';
+import { issueConfirmationPackage } from './payments.mjs';
 
 export class ToolError extends Error {}
 
@@ -422,91 +423,26 @@ export function createRouter({
       };
     }
 
-    const { rows: g } = await db.query(`select * from sena_guests where id = $1`, [
-      booking.guest_id,
-    ]);
-    const guest = g[0];
+    // The issuing itself lives in payments.mjs and is SHARED with the Paystack
+    // webhook, which fires it the moment money lands — so the guest's code
+    // arrives even if this call ended before the payment cleared. Whichever
+    // caller runs second re-sends nothing and gets the same guest ID back.
+    const out = await issueConfirmationPackage(db, notifier, booking.reference, publicUrl);
 
-    // One booking, one guest ID — enforced by the unique key on booking_id, so a
-    // retried tool call re-sends the SAME id rather than minting a second valid
-    // QR for the same stay.
-    const { rows: idRows } = await db.query(
-      `insert into sena_guest_ids (booking_id, guest_id_number, verification_number)
-            values ($1, $2, $3)
-       on conflict (booking_id) do nothing
-        returning *`,
-      [booking.id, `${booking.reference}-${code(4)}`, code(12)]
-    );
-
-    const guestId = idRows.length
-      ? idRows[0]
-      : (await db.query(`select * from sena_guest_ids where booking_id = $1`, [booking.id])).rows[0];
-
-    const pkg = {
-      hotel: s.hotel,
-      booking,
-      guest,
-      guest_id: guestId,
-      total: toMajor(booking.total_cents),
-      // The card itself (§7). The QR lives on this page; the guest opens it at
-      // the desk and shows the screen.
-      card_url: publicUrl
-        ? `${publicUrl}/api/sena/card?v=${encodeURIComponent(guestId.verification_number)}`
-        : null,
-      // The printable proof of payment (§7 document 1). Same credential, and it
-      // outlives the check-in — see src/confirmation.mjs.
-      confirmation_url: publicUrl
-        ? `${publicUrl}/api/sena/confirmation?v=${encodeURIComponent(guestId.verification_number)}`
-        : null,
-    };
-
-    const guestSend = await notifier.sendConfirmation({ to: guest.email, pkg });
-    // The owner's copy (§8). sena_hotels.email is where it goes — for the demo,
-    // point that row at a real inbox: update sena_hotels set email = '...'
-    const ownerSend = await notifier.notifyOwner({ to: s.hotel.email, pkg });
-
-    for (const [recipient, template, sent] of [
-      [guest.email, 'guest_confirmation', guestSend],
-      [s.hotel.email, 'owner_new_booking', ownerSend],
-    ]) {
-      await db.query(
-        `insert into sena_notifications_log
-                (booking_id, channel, recipient, template, status, provider_message_id, error)
-              values ($1, $2, $3, $4, $5, $6, $7)`,
-        [
-          booking.id,
-          notifier.channel,
-          recipient || 'unknown',
-          template,
-          sent.ok ? 'sent' : 'failed',
-          sent.id || null,
-          sent.ok ? null : String(sent.error || 'send failed'),
-        ]
-      );
-    }
-
-    // The owner's WhatsApp leg (§8), when configured. Skipped is a state, not a
-    // failure — the email above is the guaranteed lane either way.
-    if (ownerSend.whatsapp && !ownerSend.whatsapp.skipped) {
-      await db.query(
-        `insert into sena_notifications_log
-                (booking_id, channel, recipient, template, status, provider_message_id, error)
-              values ($1, 'whatsapp', $2, 'owner_new_booking', $3, $4, $5)`,
-        [
-          booking.id,
-          s.hotel.escalation_whatsapp || 'unknown',
-          ownerSend.whatsapp.ok ? 'sent' : 'failed',
-          ownerSend.whatsapp.id || null,
-          ownerSend.whatsapp.ok ? null : String(ownerSend.whatsapp.error || 'send failed'),
-        ]
-      );
+    if (!out.ok) {
+      return {
+        ok: false,
+        reason: out.reason,
+        say: `The confirmation could not be issued. Apologise and escalate — do not improvise.`,
+      };
     }
 
     return {
       ok: true,
-      reference: booking.reference,
-      guest_id_number: guestId.guest_id_number,
-      delivered: guestSend.ok,
+      reference: out.reference,
+      guest_id_number: out.guest_id_number,
+      delivered: out.delivered,
+      ...(out.already ? { already_sent: true } : {}),
     };
   }
 

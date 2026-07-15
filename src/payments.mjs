@@ -9,7 +9,13 @@
 // The handler's job is now only: verify the HMAC, then call this.
 // ============================================================================
 
-import { cents } from './db.mjs';
+import crypto from 'node:crypto';
+import { cents, toMajor } from './db.mjs';
+
+// Same alphabet as the router: unambiguous down a phone line and on a scanner.
+const SAFE_ALPHABET = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
+const code = (n) =>
+  Array.from(crypto.randomBytes(n), (b) => SAFE_ALPHABET[b % SAFE_ALPHABET.length]).join('');
 
 /**
  * Apply a Paystack `charge.success` event. Safe to call twice with the same
@@ -76,6 +82,122 @@ export async function applyChargeSuccess(db, event) {
   if (!confirmed.length) return { ok: true, outcome: 'paid_but_not_confirmable', reference };
 
   return { ok: true, outcome: 'confirmed', reference: confirmed[0].reference };
+}
+
+/**
+ * Issue the confirmation package for a PAID booking: mint the single-use guest
+ * ID (idempotently — one booking, one QR, ever), email the guest their
+ * check-in code and card link, email the owner, and write every leg to the
+ * ledger.
+ *
+ * TWO CALLERS, ONE PROMISE. The Paystack webhook calls this the moment money
+ * lands, so the guest's code arrives AUTOMATICALLY even if the phone call is
+ * already over. Sena's send_confirmation_package tool calls it too, mid-call.
+ * Whoever runs second finds 'guest_confirmation' already in
+ * sena_notifications_log and re-sends nothing — the guest gets exactly one
+ * confirmation, and both callers get back the same guest ID number.
+ *
+ * Returns { ok, reference, guest_id_number, delivered, already? } or
+ * { ok:false, reason } — it never throws for business reasons; the webhook
+ * must stay a 200 no matter what.
+ */
+export async function issueConfirmationPackage(db, notifier, bookingReference, publicUrl = '') {
+  const { rows } = await db.query(
+    `select to_jsonb(b.*) as booking, to_jsonb(h.*) as hotel, to_jsonb(g.*) as guest
+       from sena_bookings b
+       join sena_hotels  h on h.id = b.hotel_id
+  left join sena_guests  g on g.id = b.guest_id
+      where b.reference = $1`,
+    [bookingReference]
+  );
+  if (!rows.length) return { ok: false, reason: 'unknown_booking' };
+  const { booking, hotel, guest } = rows[0];
+
+  // The revenue gate, same as the router's: no package for an unpaid room.
+  const { rows: paidRows } = await db.query(
+    `select 1 from sena_payments where booking_id = $1 and status = 'paid' limit 1`,
+    [booking.id]
+  );
+  if (!paidRows.length || booking.status !== 'confirmed') {
+    return { ok: false, reason: 'not_paid' };
+  }
+  if (!guest) return { ok: false, reason: 'no_guest' };
+
+  // One booking, one guest ID — the unique key makes a retry re-read, not re-mint.
+  const { rows: minted } = await db.query(
+    `insert into sena_guest_ids (booking_id, guest_id_number, verification_number)
+          values ($1, $2, $3)
+     on conflict (booking_id) do nothing
+      returning *`,
+    [booking.id, `${booking.reference}-${code(4)}`, code(12)]
+  );
+  const guestId = minted.length
+    ? minted[0]
+    : (await db.query(`select * from sena_guest_ids where booking_id = $1`, [booking.id])).rows[0];
+
+  // Already confirmed once (the other caller won)? Same answer, no second email.
+  const { rows: sentBefore } = await db.query(
+    `select 1 from sena_notifications_log
+      where booking_id = $1 and template = 'guest_confirmation' and status = 'sent' limit 1`,
+    [booking.id]
+  );
+  if (sentBefore.length) {
+    return {
+      ok: true,
+      already: true,
+      reference: booking.reference,
+      guest_id_number: guestId.guest_id_number,
+      delivered: true,
+    };
+  }
+
+  const pkg = {
+    hotel,
+    booking,
+    guest,
+    guest_id: guestId,
+    total: toMajor(booking.total_cents),
+    card_url: publicUrl
+      ? `${publicUrl}/api/sena/card?v=${encodeURIComponent(guestId.verification_number)}`
+      : null,
+    confirmation_url: publicUrl
+      ? `${publicUrl}/api/sena/confirmation?v=${encodeURIComponent(guestId.verification_number)}`
+      : null,
+  };
+
+  const guestSend = await notifier.sendConfirmation({ to: guest.email, pkg });
+  const ownerSend = await notifier.notifyOwner({ to: hotel.email, pkg });
+
+  const legs = [
+    [notifier.channel, guest.email, 'guest_confirmation', guestSend],
+    [notifier.channel, hotel.email, 'owner_new_booking', ownerSend],
+  ];
+  if (ownerSend.whatsapp && !ownerSend.whatsapp.skipped) {
+    legs.push(['whatsapp', hotel.escalation_whatsapp, 'owner_new_booking', ownerSend.whatsapp]);
+  }
+  for (const [channel, recipient, template, sent] of legs) {
+    await db.query(
+      `insert into sena_notifications_log
+              (booking_id, channel, recipient, template, status, provider_message_id, error)
+            values ($1, $2, $3, $4, $5, $6, $7)`,
+      [
+        booking.id,
+        channel,
+        recipient || 'unknown',
+        template,
+        sent.ok ? 'sent' : 'failed',
+        sent.id || null,
+        sent.ok ? null : String(sent.error || 'send failed'),
+      ]
+    );
+  }
+
+  return {
+    ok: true,
+    reference: booking.reference,
+    guest_id_number: guestId.guest_id_number,
+    delivered: guestSend.ok,
+  };
 }
 
 /**
