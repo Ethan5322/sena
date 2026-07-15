@@ -65,6 +65,27 @@ const { rows: avail } = await db.query(
 if (avail.length) pass(`availability answers — ${avail.length} room types sellable`);
 else fail('availability returned nothing after install');
 
+// ── Run it AGAIN — the upgrade path ─────────────────────────────────────────
+// The real deployment shares a free Supabase with MuleSoo, and the file WILL be
+// pasted a second time when the schema grows (it already has: the photo columns
+// and self check-in arrived after the first install). A second run must apply
+// cleanly, keep MuleSoo intact, and leave Sena working.
+try {
+  await db.exec(read('sena-all-in-one.sql'));
+  pass('sena-all-in-one.sql ran a SECOND time — upgrading an existing install is a re-paste');
+} catch (e) {
+  fail(`re-running sena-all-in-one.sql broke — ${e.message}`);
+}
+
+const { rows: corp2 } = await db.query(`select count(*)::int as n from corp_departments`);
+if (corp2[0].n === 2) pass("MuleSoo's table survived the re-run too");
+else fail("the re-run touched MuleSoo's data");
+
+const { rows: again } = await db.query(
+  `select 1 from sena_check_availability((select id from sena_hotels where is_demo), current_date + 7, current_date + 9, 2)`);
+if (again.length) pass('and Sena still answers availability after the re-run');
+else fail('availability broke after the re-run');
+
 // No name Sena created may collide with a name MuleSoo uses.
 //
 // Functions installed BY AN EXTENSION (pgcrypto brings gen_random_uuid, digest,

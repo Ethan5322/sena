@@ -680,42 +680,58 @@ $$;
 -- sena_bookings are created by Sena through the service_role key, which bypasses RLS
 -- entirely. The one thing reception must be able to do by hand is check a guest
 -- in, and that goes through sena_knock_out_guest_id(), not a raw UPDATE.
+--
+-- Each policy is dropped before it is created because Postgres has no
+-- CREATE POLICY IF NOT EXISTS — and the install file must be safe to paste
+-- AGAIN into a database that already ran an older version of it. Dropping and
+-- recreating a policy in the same transaction-free script leaves no window:
+-- with RLS enabled, "no policy" already means deny.
 
+drop policy if exists staff_read_hotel on sena_hotels;
 create policy staff_read_hotel on sena_hotels
   for select to authenticated using (sena_is_staff_of(id));
 
+drop policy if exists staff_read_rooms on sena_rooms;
 create policy staff_read_rooms on sena_rooms
   for select to authenticated using (sena_is_staff_of(hotel_id));
 
+drop policy if exists staff_read_calls on sena_calls;
 create policy staff_read_calls on sena_calls
   for select to authenticated using (sena_is_staff_of(hotel_id));
 
+drop policy if exists staff_read_guests on sena_guests;
 create policy staff_read_guests on sena_guests
   for select to authenticated using (sena_is_staff_of(hotel_id));
 
+drop policy if exists staff_read_bookings on sena_bookings;
 create policy staff_read_bookings on sena_bookings
   for select to authenticated using (sena_is_staff_of(hotel_id));
 
+drop policy if exists staff_read_guest_ids on sena_guest_ids;
 create policy staff_read_guest_ids on sena_guest_ids
   for select to authenticated using (
     exists (select 1 from sena_bookings b where b.id = sena_guest_ids.booking_id and sena_is_staff_of(b.hotel_id))
   );
 
+drop policy if exists staff_read_payments on sena_payments;
 create policy staff_read_payments on sena_payments
   for select to authenticated using (
     exists (select 1 from sena_bookings b where b.id = sena_payments.booking_id and sena_is_staff_of(b.hotel_id))
   );
 
+drop policy if exists staff_read_notifications on sena_notifications_log;
 create policy staff_read_notifications on sena_notifications_log
   for select to authenticated using (
     booking_id is null
     or exists (select 1 from sena_bookings b where b.id = sena_notifications_log.booking_id and sena_is_staff_of(b.hotel_id))
   );
 
+drop policy if exists staff_read_own_staff_rows on sena_hotel_staff;
 create policy staff_read_own_staff_rows on sena_hotel_staff
   for select to authenticated using (user_id = auth.uid());
 
 -- Owners and managers may correct room rates and inventory from the dashboard.
+drop policy if exists managers_write_rooms on sena_rooms;
 create policy managers_write_rooms on sena_rooms
   for update to authenticated
   using (
