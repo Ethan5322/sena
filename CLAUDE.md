@@ -13,6 +13,9 @@ Version 1.2 — Project instructions for Claude Code
 | **Voice stack** | **Self-hosted and free.** LiveKit (webRTC) + Pipecat + faster-whisper + Piper. **No Vapi, no ElevenLabs, no Twilio.** | §5's table is superseded. The guest reaches Sena through a **Call Reception button in a browser**, not a phone number — see `docs/voice-stack.md`. The only meter running is the Anthropic API. A real phone number is a documented bolt-on (LiveKit SIP), not a rebuild. |
 | **Languages** | **English only, for now.** | **This is a regression against the original spec and it is deliberate.** No self-hostable TTS can speak Amharic — not Piper, not Coqui. Whisper still *hears* Amharic, so Sena understands an Amharic speaker and answers in English. Restoring it means either an Amharic Piper voice (does not exist yet; drops in as one `.onnx` file) or paying for a voice, which reintroduces a vendor. Every §-reference to Amharic below is aspirational until then. |
 | **Agency credit** | Booking PDF + Guest ID card carry the **MuleSoo credit lockup** | House rule across every MuleSoo client deliverable. |
+| **Arrival** | **Self check-in: code + photo** | The confirmation email (sent only after payment) carries a **check-in code**, valid until it is used or the stay ends. On arrival the guest picks "check in with your code" on the reception page, enters it, takes/uploads a photo (auto-cropped to ID framing on their own device), and is checked in — the guest ID becomes an **in-stay photo pass** valid until check-out, after which it expires and the **photo is deleted automatically** (POPIA: biometric data does not outlive the stay). The staff QR scan at the desk remains the other door. See `api/sena/checkin.mjs`, `sena_self_check_in()`. |
+| **Owner alerts** | **WhatsApp + email** | The owner is pinged on WhatsApp (CallMeBot for one hotel — zero Meta paperwork; Meta Cloud API for many) for every payment landed, new booking, cancellation, escalation and check-in. Email is always sent too — WhatsApp is the fast lane, never the only lane. See `src/adapters/whatsapp.mjs`. |
+| **Email transport** | **Resend HTTP API** (`RESEND_API_KEY`), SMTP fallback | One HTTPS call per mail — the transport that fits Vercel functions. The professional payment email (Paystack link + full booking detail) and the confirmation email (check-in code, guest ID) both ride it. |
 
 **Multi-tenancy note:** the schema carries a `hotels` table and a `hotel_id` on every row even though §6 does not list one. MuleSoo sells this system to many hotels; without a tenant key, hotel #2 means a second database. This costs one column now and saves a rewrite later.
 
@@ -225,7 +228,7 @@ Minimum Supabase tables, derived directly from the journey map in §2:
 
 **2. Hotel Guest ID (digital, QR-coded)** — Guest ID number, full name, nationality, phone, email, check-in/out date+time, and a **QR code/barcode** encoding all of the above plus the verification number, scannable at the front desk.
 
-**3. ID Lifecycle Rule:** valid only until scanned/verified once at physical check-in ("knock-out"). On scan, Supabase marks it `used`/`expired` — it can never be reused or shared for a second check-in. A new booking always generates a fresh ID.
+**3. ID Lifecycle Rule:** the verification code is valid until spent **once** — scanned at the desk ("knock-out") or entered at self check-in — or until the stay ends, whichever comes first. On use, Supabase marks it `used`; it can never be reused or shared for a second check-in. After self check-in the card lives on as the **in-stay photo pass** until check-out, then flips to `expired` and its photo is purged. A new booking always generates a fresh ID.
 
 ---
 
@@ -292,8 +295,10 @@ sena-ai-receptionist/
 *Build order — done, in this order: (1) `supabase/schema.sql`, (2) `src/router.mjs`
 (the booking flow; n8n was never used), (3) `voice-agent/system-prompt.md`,
 (4) the Paystack webhook, (5) the QR guest ID + email delivery, (6) cancellations and
-the daily jobs, (7) the free self-hosted voice stack.*
+the daily jobs, (7) the free self-hosted voice stack, (8) the owner dashboard and the
+booking confirmation document, (9) the arrival flow: self check-in by code + photo,
+the in-stay photo pass with PNG/PDF download, owner WhatsApp alerts, Resend email.*
 
-*What is left: deploy to Vercel · the owner dashboard (§2 promises owner visibility
-at six stages and none of it exists) · the booking confirmation PDF with the MuleSoo
-QR credit stamp.*
+*What is left: deploy (Vercel + Supabase + a box for the voice stack — blocked on
+accounts) · on-call tap options over the LiveKit data channel (choices and a Pay-now
+button on the guest's screen mid-call) · a real phone number (LiveKit SIP, paid).*
