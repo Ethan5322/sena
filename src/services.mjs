@@ -41,6 +41,8 @@ export function getServices() {
     callbackUrl: process.env.PAYSTACK_CALLBACK_URL,
   });
   const notifier = createNotifier({
+    // Resend when its key is set (the serverless-native transport); SMTP else.
+    resendApiKey: process.env.RESEND_API_KEY,
     host: process.env.SMTP_HOST,
     port: process.env.SMTP_PORT,
     user: process.env.SMTP_USER,

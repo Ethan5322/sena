@@ -17,10 +17,11 @@
 // every guest already gives Sena an address — send_payment_link refuses to run
 // without one. So email is the channel.
 //
-// This is a plain SMTP transport, so it works with Gmail today (an app password,
-// no signup) and with a proper bookings@hotel.co.za sender later, without a code
-// change. Swapping WhatsApp back in means writing another module with these four
-// methods; the router does not change.
+// Two transports behind one seam: the Resend HTTP API when RESEND_API_KEY is
+// set (the serverless-native path — one HTTPS call, delivery visible on their
+// dashboard), or plain SMTP, which works with Gmail today (an app password, no
+// signup) and a proper bookings@hotel.co.za sender later. Either way the
+// router sees the same four methods and does not change.
 //
 // A send that fails returns { ok: false } instead of throwing. The router logs it
 // to sena_notifications_log and tells Sena to try another way. When an owner says
@@ -57,21 +58,55 @@ const button = (accent, href, label) => `
 // `whatsapp` is optional (src/adapters/whatsapp.mjs). When present, every
 // OWNER-facing send goes out on both channels: email is the record, WhatsApp is
 // the tap on the shoulder. Guests never get WhatsApp — see the header above.
-export function createNotifier({ host, port, user, pass, from, whatsapp = null }) {
-  const configured = Boolean(host && user && pass);
+//
+// TWO WAYS OUT OF THE BUILDING, one seam. `resendApiKey` set → the Resend HTTP
+// API (api.resend.com), which is the right transport on serverless: one HTTPS
+// call, no SMTP handshake to time out mid-function, delivery tracked on their
+// dashboard. Otherwise plain SMTP as always. Same four methods either way.
+export function createNotifier({ host, port, user, pass, from, resendApiKey = null, whatsapp = null }) {
+  const viaResend = Boolean(resendApiKey);
+  const configured = viaResend || Boolean(host && user && pass);
 
-  const transport = configured
-    ? nodemailer.createTransport({
-        host,
-        port: Number(port) || 587,
-        secure: Number(port) === 465,
-        auth: { user, pass },
-      })
-    : null;
+  const transport =
+    configured && !viaResend
+      ? nodemailer.createTransport({
+          host,
+          port: Number(port) || 587,
+          secure: Number(port) === 465,
+          auth: { user, pass },
+        })
+      : null;
 
   async function mail({ to, subject, html, text }) {
-    if (!configured) return { ok: false, error: 'email is not configured (SMTP_*)' };
+    if (!configured) return { ok: false, error: 'email is not configured (RESEND_API_KEY or SMTP_*)' };
     if (!to) return { ok: false, error: 'no email address for this recipient' };
+
+    if (viaResend) {
+      try {
+        const r = await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${resendApiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            // Until a domain is verified with Resend, only their onboarding
+            // sender delivers — see .env.example.
+            from: from || 'Sena <onboarding@resend.dev>',
+            to: [to],
+            subject,
+            html,
+            text,
+          }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) return { ok: false, error: j?.message || `resend said ${r.status}` };
+        return { ok: true, id: j?.id };
+      } catch (err) {
+        return { ok: false, error: err.message };
+      }
+    }
+
     try {
       const info = await transport.sendMail({
         from: from || user,
@@ -95,24 +130,80 @@ export function createNotifier({ host, port, user, pass, from, whatsapp = null }
   return {
     channel: 'email',
 
-    /** The payment link, during the call. The room is held while they pay. */
+    /** The payment link, during the call. The room is held while they pay.
+     *  Detailed on purpose: a payment request that does not say exactly what
+     *  is being bought, from whom, for which nights, reads as phishing. */
     async sendPaymentLink({ to, pkg, url }) {
       const a = pkg.hotel.brand_accent;
+      const firstName = (pkg.guest.full_name || 'Guest').split(/\s+/)[0];
+      const roomName = pkg.room
+        ? pkg.room.plan
+          ? `${pkg.room.name} · ${pkg.room.plan}`
+          : pkg.room.name
+        : 'your room';
+      const nights = Math.max(
+        1,
+        Math.round((new Date(pkg.booking.check_out) - new Date(pkg.booking.check_in)) / 864e5)
+      );
+      const inLine = `${pkg.booking.check_in} from ${String(pkg.hotel.check_in_time).slice(0, 5)}`;
+      const outLine = `${pkg.booking.check_out} by ${String(pkg.hotel.check_out_time).slice(0, 5)}`;
+
+      const row = (k, v, strong = false) =>
+        `<tr><td style="padding:.4rem 0;color:#6B7280">${esc(k)}</td>
+             <td style="padding:.4rem 0;text-align:right">${strong ? '<strong>' : ''}${esc(v)}${strong ? '</strong>' : ''}</td></tr>`;
+
       return mail({
         to,
-        subject: `${pkg.hotel.name} — pay to confirm booking ${pkg.booking.reference}`,
+        subject: `${pkg.hotel.name} — complete your booking ${pkg.booking.reference} · ${money(pkg)}`,
         text:
-          `${pkg.hotel.name}\n\nBooking ${pkg.booking.reference}\n` +
-          `${money(pkg)} to confirm your room.\n\nPay securely: ${url}\n\n` +
-          `This holds your room for ${pkg.hotel.hold_minutes} minutes.`,
+          `Dear ${pkg.guest.full_name},\n\n` +
+          `Thank you for choosing ${pkg.hotel.name}. As discussed with Sena, our ` +
+          `reception assistant, your room is being held while you complete payment.\n\n` +
+          `YOUR BOOKING\n` +
+          `  Reference   ${pkg.booking.reference}\n` +
+          `  Room        ${roomName}\n` +
+          `  Check-in    ${inLine}\n` +
+          `  Check-out   ${outLine}\n` +
+          `  Stay        ${nights} night${nights === 1 ? '' : 's'} · ${pkg.booking.guests_count} guest${Number(pkg.booking.guests_count) === 1 ? '' : 's'}\n` +
+          `  Total due   ${money(pkg)}\n\n` +
+          `PAY SECURELY (Paystack):\n${url}\n\n` +
+          `Your room is held for ${pkg.hotel.hold_minutes} minutes. If payment is not ` +
+          `completed in that time, the room is released for other guests.\n\n` +
+          `WHAT HAPPENS NEXT\n` +
+          `The moment your payment is received, your booking is confirmed and we ` +
+          `email your personal CHECK-IN CODE and digital guest ID. The code stays ` +
+          `valid until you check in — at the front desk or on our reception page — ` +
+          `or until your stay ends. Payment is processed entirely by Paystack; ` +
+          `we never see or store your card details.\n\n` +
+          `We look forward to welcoming you.\n${pkg.hotel.name}` +
+          (pkg.hotel.address ? `\n${pkg.hotel.address}` : ''),
         html: wrap(
           a,
-          `Confirm your booking`,
-          `<p>Your room at <strong>${esc(pkg.hotel.name)}</strong> is being held.</p>
-           <p><strong>${esc(money(pkg))}</strong> · booking ${esc(pkg.booking.reference)}</p>
-           ${button(a, url, 'Pay securely')}
-           <p style="color:#B45309"><strong>We can hold the room for
-              ${esc(pkg.hotel.hold_minutes)} minutes.</strong></p>`
+          `Complete your booking`,
+          `<p>Dear ${esc(pkg.guest.full_name)},</p>
+           <p>Thank you for choosing <strong>${esc(pkg.hotel.name)}</strong>. As discussed
+              with Sena, our reception assistant, your room is being held while you
+              complete payment.</p>
+           <table style="width:100%;border-collapse:collapse;font-size:.9rem">
+             ${row('Reference', pkg.booking.reference, true)}
+             ${row('Room', roomName)}
+             ${row('Check-in', inLine)}
+             ${row('Check-out', outLine)}
+             ${row('Stay', `${nights} night${nights === 1 ? '' : 's'} · ${pkg.booking.guests_count} guest${Number(pkg.booking.guests_count) === 1 ? '' : 's'}`)}
+             ${row('Total due', money(pkg), true)}
+           </table>
+           ${button(a, url, `Pay ${money(pkg)} securely`)}
+           <p style="background:#FEF3C7;padding:.8rem 1rem;border-radius:8px;color:#92400E;font-size:.9rem">
+             <strong>Your room is held for ${esc(pkg.hotel.hold_minutes)} minutes.</strong>
+             If payment is not completed in that time, the room is released for other guests.</p>
+           <p style="margin:1.4rem 0 .3rem;font-size:.8rem;letter-spacing:.08em;
+                     text-transform:uppercase;color:#6B7280">What happens next</p>
+           <p style="font-size:.9rem">The moment your payment is received, your booking is
+              confirmed and we email your personal <strong>check-in code</strong> and digital
+              guest ID. The code stays valid until you check in — at the front desk or on our
+              reception page — or until your stay ends.</p>
+           <p style="font-size:.8rem;color:#6B7280">Payment is processed securely by Paystack.
+              ${esc(pkg.hotel.name)} never sees or stores your card details.</p>`
         ),
       });
     },
@@ -136,7 +227,9 @@ export function createNotifier({ host, port, user, pass, from, whatsapp = null }
           `YOUR CHECK-IN CODE: ${code}\n\n` +
           `When you arrive, open the hotel's reception page, choose "check in with ` +
           `your code", enter the code above and take a quick photo — your photo ` +
-          `guest ID is issued on the spot. It works once, and stays valid until check-out.\n\n` +
+          `guest ID is issued on the spot. The code works once and remains valid ` +
+          `until you check in or your stay ends; your photo ID then carries you ` +
+          `to check-out.\n\n` +
           (pkg.card_url
             ? `Prefer the front desk? Open your guest ID and show the QR:\n${pkg.card_url}`
             : `Guest ID: ${pkg.guest_id.guest_id_number}`) +
@@ -165,8 +258,9 @@ export function createNotifier({ host, port, user, pass, from, whatsapp = null }
            <p style="font-size:.85rem;color:#6B7280;margin-top:.6rem">
              When you arrive, open the hotel's reception page, choose
              <strong>check in with your code</strong>, enter this code and take a
-             quick photo — your photo guest ID is issued on the spot. It works
-             once, and stays valid until check-out.</p>
+             quick photo — your photo guest ID is issued on the spot. The code
+             works once and remains valid until you check in or your stay ends;
+             your photo ID then carries you to check-out.</p>
            ${
              pkg.card_url
                ? `<p style="margin-top:1.5rem">Prefer the front desk? Open your guest ID and show the QR.</p>

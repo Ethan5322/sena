@@ -330,10 +330,16 @@ export function createRouter({
       [booking.id, reference, amount, s.hotel.currency]
     );
 
+    // The email quotes the room by name — a payment request that does not say
+    // what it is for reads as phishing, and gets deleted instead of paid.
+    const { rows: roomRows } = await db.query(`select * from sena_rooms where id = $1`, [
+      booking.room_id,
+    ]);
+
     const sent = await notifier.sendPaymentLink({
       to: guest.email,
       url: authorization_url,
-      pkg: { hotel: s.hotel, booking, guest, total: toMajor(amount) },
+      pkg: { hotel: s.hotel, booking, guest, room: roomRows[0], total: toMajor(amount) },
     });
 
     await db.query(
