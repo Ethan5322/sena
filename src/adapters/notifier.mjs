@@ -64,6 +64,12 @@ const button = (accent, href, label) => `
 // call, no SMTP handshake to time out mid-function, delivery tracked on their
 // dashboard. Otherwise plain SMTP as always. Same four methods either way.
 export function createNotifier({ host, port, user, pass, from, resendApiKey = null, whatsapp = null }) {
+  // A `.env` file strips wrapping quotes; the Vercel dashboard stores them
+  // literally. `"Hotel <a@b.c>"` with the quotes kept is an invalid From that
+  // fails EVERY send — so shed one layer of wrapping quotes here, where both
+  // worlds meet, instead of asking every operator to know the difference.
+  from = String(from || '').trim().replace(/^(['"])(.*)\1$/, '$2') || undefined;
+
   const viaResend = Boolean(resendApiKey);
   const configured = viaResend || Boolean(host && user && pass);
 
