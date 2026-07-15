@@ -14,8 +14,8 @@
 // ============================================================================
 
 import crypto from 'node:crypto';
-import { createPgDb } from '../../src/db.mjs';
-import { applyChargeSuccess } from '../../src/payments.mjs';
+import { getServices } from '../../src/services.mjs';
+import { applyChargeSuccess, notifyPaymentLanded } from '../../src/payments.mjs';
 
 export const config = {
   // The HMAC is computed over the RAW bytes. Let Vercel parse the body first and
@@ -23,8 +23,9 @@ export const config = {
   api: { bodyParser: false },
 };
 
-let db;
-const database = () => (db ??= createPgDb(process.env.DATABASE_URL));
+// getServices(), not a raw pool: same database, and it brings the notifier —
+// the owner's "money landed" ping leaves from here.
+const database = () => getServices().db;
 
 const readRaw = (req) =>
   new Promise((resolve, reject) => {
@@ -65,6 +66,10 @@ export default async function handler(req, res) {
     const result = await applyChargeSuccess(database(), event);
     if (result.outcome !== 'confirmed') {
       console.error(`[sena] paystack ${result.outcome} on ${result.reference}`, result);
+    } else {
+      // §8: the owner hears about money the moment it lands — WhatsApp +
+      // email. 'confirmed' fires exactly once per booking, so this does too.
+      await notifyPaymentLanded(database(), getServices().notifier, result.reference);
     }
     return res.status(200).json(result);
   } catch (err) {

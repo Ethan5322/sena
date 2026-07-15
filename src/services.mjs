@@ -20,6 +20,7 @@ import { createPgDb } from './db.mjs';
 import { createRouter } from './router.mjs';
 import { createPaystack } from './adapters/paystack.mjs';
 import { createNotifier } from './adapters/notifier.mjs';
+import { createWhatsApp, createCallMeBot } from './adapters/whatsapp.mjs';
 
 let cached = null;
 
@@ -45,6 +46,19 @@ export function getServices() {
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,
     from: process.env.SMTP_FROM,
+    // Owner alerts also land on WhatsApp when configured; email regardless.
+    // CallMeBot when its key is set (one hotel, zero Meta paperwork);
+    // otherwise the Meta Cloud API adapter.
+    whatsapp: process.env.CALLMEBOT_APIKEY
+      ? createCallMeBot({
+          phone: process.env.CALLMEBOT_PHONE,
+          apikey: process.env.CALLMEBOT_APIKEY,
+        })
+      : createWhatsApp({
+          token: process.env.WHATSAPP_TOKEN,
+          phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID,
+          templateName: process.env.WHATSAPP_TEMPLATE_NAME,
+        }),
   });
 
   cached = {

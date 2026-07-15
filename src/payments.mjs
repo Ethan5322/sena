@@ -77,3 +77,68 @@ export async function applyChargeSuccess(db, event) {
 
   return { ok: true, outcome: 'confirmed', reference: confirmed[0].reference };
 }
+
+/**
+ * Tell the owner THE MOMENT money lands (CLAUDE.md §8) — WhatsApp first,
+ * email as the record. Call this only when applyChargeSuccess() returned
+ * outcome 'confirmed': that outcome fires exactly once per booking (the
+ * status<>'paid' claim is the idempotency), so the owner is pinged exactly
+ * once no matter how many times the gateway retries the webhook.
+ *
+ * Never throws — a webhook must acknowledge the money even if the owner's
+ * phone is unreachable. Failures land in sena_notifications_log instead.
+ */
+export async function notifyPaymentLanded(db, notifier, bookingReference) {
+  try {
+    const { rows } = await db.query(
+      `select b.id as booking_id, b.reference, b.check_in, b.check_out, b.total_cents,
+              g.full_name, g.nationality,
+              r.name as room_name,
+              h.name as hotel_name, h.email as hotel_email,
+              h.escalation_whatsapp, h.currency
+         from sena_bookings b
+         join sena_rooms  r on r.id = b.room_id
+         join sena_hotels h on h.id = b.hotel_id
+    left join sena_guests g on g.id = b.guest_id
+        where b.reference = $1`,
+      [bookingReference]
+    );
+    if (!rows.length) return;
+    const b = rows[0];
+    const amount = `${b.currency} ${(Number(b.total_cents) / 100).toFixed(2)}`;
+
+    const sent = await notifier.alertOwner({
+      to: b.hotel_email,
+      whatsappTo: b.escalation_whatsapp,
+      subject: `💰 Payment received — ${amount} (${b.reference})`,
+      text:
+        `PAYMENT RECEIVED\n\n` +
+        `${b.full_name || 'guest'} · ${b.nationality || 'nationality not given'}\n` +
+        `${b.room_name}\n${b.check_in} → ${b.check_out}\n` +
+        `${amount} · ${b.reference}\n\n` +
+        `The booking is confirmed; the guest's documents are on their way.`,
+    });
+
+    for (const [channel, leg] of [
+      ['email', sent],
+      ['whatsapp', sent.whatsapp],
+    ]) {
+      if (!leg || leg.skipped) continue; // unconfigured is a state, not a failure
+      await db.query(
+        `insert into sena_notifications_log
+                (booking_id, channel, recipient, template, status, provider_message_id, error)
+              values ($1, $2, $3, 'owner_payment_received', $4, $5, $6)`,
+        [
+          b.booking_id,
+          channel,
+          channel === 'whatsapp' ? b.escalation_whatsapp : b.hotel_email || 'unknown',
+          leg.ok ? 'sent' : 'failed',
+          leg.id || null,
+          leg.ok ? null : String(leg.error || 'send failed'),
+        ]
+      );
+    }
+  } catch (err) {
+    console.error('[sena] payment-landed alert failed:', err);
+  }
+}

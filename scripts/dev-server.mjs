@@ -26,7 +26,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { useServices, getServices } from '../src/services.mjs';
 import { createDemoServices } from '../src/demo.mjs';
-import { applyChargeSuccess } from '../src/payments.mjs';
+import { applyChargeSuccess, notifyPaymentLanded } from '../src/payments.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, '..');
@@ -162,6 +162,10 @@ const server = http.createServer(async (req, res) => {
     });
 
     console.log(`  [demo paystack] PAID ${ref} → ${JSON.stringify(result)}`);
+    if (result.outcome === 'confirmed') {
+      // Same owner ping the production webhook sends, through the demo notifier.
+      await notifyPaymentLanded(demo.db, demo.notifier, result.reference);
+    }
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     return res.status(200).send(
       `<body style="font:16px system-ui;display:grid;place-items:center;height:100vh;margin:0;background:#F7F5F2">

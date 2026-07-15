@@ -479,6 +479,23 @@ export function createRouter({
       );
     }
 
+    // The owner's WhatsApp leg (§8), when configured. Skipped is a state, not a
+    // failure — the email above is the guaranteed lane either way.
+    if (ownerSend.whatsapp && !ownerSend.whatsapp.skipped) {
+      await db.query(
+        `insert into sena_notifications_log
+                (booking_id, channel, recipient, template, status, provider_message_id, error)
+              values ($1, 'whatsapp', $2, 'owner_new_booking', $3, $4, $5)`,
+        [
+          booking.id,
+          s.hotel.escalation_whatsapp || 'unknown',
+          ownerSend.whatsapp.ok ? 'sent' : 'failed',
+          ownerSend.whatsapp.id || null,
+          ownerSend.whatsapp.ok ? null : String(ownerSend.whatsapp.error || 'send failed'),
+        ]
+      );
+    }
+
     return {
       ok: true,
       reference: booking.reference,
@@ -586,6 +603,7 @@ export function createRouter({
 
     await notifier.alertOwner({
       to: s.hotel.email,
+      whatsappTo: s.hotel.escalation_whatsapp,
       subject: `Cancelled — ${b.reference} (${b.full_name || 'guest'})`,
       text:
         `BOOKING CANCELLED\n\n` +
@@ -634,6 +652,7 @@ export function createRouter({
     // an upset guest is not made to wait while someone checks their inbox.
     await notifier.alertOwner({
       to: s.hotel.email,
+      whatsappTo: s.hotel.escalation_whatsapp,
       subject: `Sena — call needs a person (${args.reason})`,
       text:
         `Reason: ${args.reason}\n` +

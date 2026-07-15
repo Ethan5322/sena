@@ -21,7 +21,8 @@ import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
 import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto';
 import { createRouter } from '../src/router.mjs';
-import { applyChargeSuccess } from '../src/payments.mjs';
+import { applyChargeSuccess, notifyPaymentLanded } from '../src/payments.mjs';
+import { createWhatsApp } from '../src/adapters/whatsapp.mjs';
 import { useServices } from '../src/services.mjs';
 import checkinHandler from '../api/sena/checkin.mjs';
 import cardHandler from '../api/sena/card.mjs';
@@ -61,7 +62,8 @@ const notifier = {
   sendPaymentLink: noop,
   sendConfirmation: noop,
   notifyOwner: noop,
-  alertOwner: noop,
+  // Shaped like the real alertOwner: an email result carrying a whatsapp leg.
+  alertOwner: async () => ({ ok: true, id: 'x', whatsapp: { ok: true, id: 'wa-1' } }),
 };
 const router = createRouter({
   db,
@@ -156,6 +158,25 @@ const found = await hit({ action: 'lookup', code: today.code });
 ok(found.body.ok && found.body.state === 'ready', `lookup on arrival day → ready (${found.body.reference})`);
 ok(found.body.guest_name === 'Naledi Dlamini', 'the lookup shows the guest their own booking');
 ok(String(found.body.card_url).includes(today.code), 'and where their card will be');
+
+// ── Money landing pings the owner (§8) ────────────────────────────────────────
+const { rows: refRow } = await db.query(`select reference from sena_bookings where id = $1`, [
+  today.bookingId,
+]);
+await notifyPaymentLanded(db, notifier, refRow[0].reference);
+const { rows: pings } = await db.query(
+  `select channel, status from sena_notifications_log
+    where booking_id = $1 and template = 'owner_payment_received' order by channel`,
+  [today.bookingId]
+);
+ok(
+  pings.length === 2 && pings[0].channel === 'email' && pings[1].channel === 'whatsapp' &&
+    pings.every((p) => p.status === 'sent'),
+  'money landing pings the owner on email AND WhatsApp, and the ledger records both'
+);
+
+const waUnconfigured = await createWhatsApp({}).send({ to: '+27820000000', text: 'x' });
+ok(waUnconfigured.skipped === true, 'unconfigured WhatsApp declares itself skipped — email remains the guaranteed lane');
 
 // ── The card before check-in: the arrival QR pass ─────────────────────────────
 const cardBefore = await hitCard(today.code);

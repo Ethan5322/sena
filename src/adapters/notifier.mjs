@@ -54,7 +54,10 @@ const button = (accent, href, label) => `
     Or paste this into your browser:<br>${esc(href)}
   </p>`;
 
-export function createNotifier({ host, port, user, pass, from }) {
+// `whatsapp` is optional (src/adapters/whatsapp.mjs). When present, every
+// OWNER-facing send goes out on both channels: email is the record, WhatsApp is
+// the tap on the shoulder. Guests never get WhatsApp — see the header above.
+export function createNotifier({ host, port, user, pass, from, whatsapp = null }) {
   const configured = Boolean(host && user && pass);
 
   const transport = configured
@@ -81,6 +84,12 @@ export function createNotifier({ host, port, user, pass, from }) {
     } catch (err) {
       return { ok: false, error: err.message };
     }
+  }
+
+  /** The WhatsApp leg. Never throws; { skipped:true } when not configured. */
+  async function ping(to, text) {
+    if (!whatsapp || !to) return { ok: false, skipped: true, error: 'no whatsapp' };
+    return whatsapp.send({ to, text });
   }
 
   return {
@@ -175,9 +184,17 @@ export function createNotifier({ host, port, user, pass, from }) {
       });
     },
 
-    /** Every completed booking (CLAUDE.md §8). */
+    /** Every completed booking (CLAUDE.md §8). Email + owner WhatsApp. */
     async notifyOwner({ to, pkg }) {
-      return mail({
+      const wa = await ping(
+        pkg.hotel.escalation_whatsapp,
+        `🏨 NEW BOOKING — ${pkg.hotel.name}\n` +
+          `${pkg.guest.full_name} · ${pkg.guest.phone}\n` +
+          `${pkg.booking.check_in} → ${pkg.booking.check_out}\n` +
+          `Paid ${money(pkg)} · ${pkg.booking.reference}` +
+          (pkg.booking.needs_approval ? `\n⚠ Early/late request — needs your approval` : '')
+      );
+      const sent = await mail({
         to,
         subject: `New booking — ${pkg.guest.full_name}, ${pkg.booking.check_in} (${pkg.booking.reference})`,
         text:
@@ -201,6 +218,7 @@ export function createNotifier({ host, port, user, pass, from }) {
            }`
         ),
       });
+      return { ...sent, whatsapp: wa };
     },
 
     /** The day before arrival (§2 stage 10). */
@@ -289,17 +307,21 @@ export function createNotifier({ host, port, user, pass, from }) {
       });
     },
 
-    /** A call that needs a person, right now (§3). Also cancellations. */
-    async alertOwner({ to, subject, text }) {
-      return mail({
+    /** A call that needs a person, right now (§3). Also cancellations,
+     *  payments landing, and check-ins. Pass `whatsappTo` (usually
+     *  hotel.escalation_whatsapp) and the same words go to the owner's phone. */
+    async alertOwner({ to, whatsappTo, subject, text }) {
+      const wa = await ping(whatsappTo, `${subject || 'Sena — a call needs a person'}\n\n${text}`);
+      const sent = await mail({
         to,
         subject: subject || 'Sena — a call needs a person',
         text,
         html: `<div style="font:15px/1.6 sans-serif;color:#0B1220">
-                 <h1 style="font-size:1.1rem;color:#B91C1C">A call needs a person</h1>
+                 <h1 style="font-size:1.1rem;color:#B91C1C">${esc(subject || 'A call needs a person')}</h1>
                  <pre style="font:inherit;white-space:pre-wrap">${esc(text)}</pre>
                </div>`,
       });
+      return { ...sent, whatsapp: wa };
     },
   };
 }
