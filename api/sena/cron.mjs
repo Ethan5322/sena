@@ -11,24 +11,12 @@
 // ============================================================================
 
 import crypto from 'node:crypto';
-import { createPgDb } from '../../src/db.mjs';
-import { createNotifier } from '../../src/adapters/notifier.mjs';
+// getServices(), not a hand-rolled pair: the daily emails must leave through
+// the SAME notifier the rest of the system uses — Resend when RESEND_API_KEY
+// is set, SMTP otherwise, owner WhatsApp riding along. A cron with its own
+// private mailer is how "the reminders stopped" goes unnoticed for a month.
+import { getServices } from '../../src/services.mjs';
 import { runDailyJobs } from '../../src/daily.mjs';
-
-let cached;
-function services() {
-  if (cached) return cached;
-  const db = createPgDb(process.env.DATABASE_URL);
-  const notifier = createNotifier({
-    host: process.env.SMTP_HOST,
-    port: process.env.SMTP_PORT,
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-    from: process.env.SMTP_FROM,
-  });
-  cached = { db, notifier };
-  return cached;
-}
 
 function authorised(req) {
   const secret = process.env.CRON_SECRET;
@@ -44,7 +32,7 @@ export default async function handler(req, res) {
   if (!authorised(req)) return res.status(401).json({ error: 'unauthorised' });
 
   try {
-    const { db, notifier } = services();
+    const { db, notifier } = getServices();
     const result = await runDailyJobs(db, notifier);
     console.log('[sena] daily jobs:', result);
     return res.status(200).json({ ok: true, ...result });
