@@ -52,7 +52,8 @@ export default async function handler(req, res) {
         to_jsonb(b.*)  as booking,
         to_jsonb(g.*)  as guest,
         to_jsonb(r.*)  as room,
-        to_jsonb(h.*)  as hotel
+        to_jsonb(h.*)  as hotel,
+        ((now() at time zone h.timezone)::date <= b.check_out) as stay_ongoing
        from sena_guest_ids gi
        join sena_bookings  b on b.id = gi.booking_id
        join sena_rooms     r on r.id = b.room_id
@@ -66,24 +67,32 @@ export default async function handler(req, res) {
     return res.status(404).send(notice('Not found', 'This guest ID does not exist.'));
   }
 
-  const { guest_id: guestId, booking, guest, room, hotel } = rows[0];
+  const { guest_id: guestId, booking, guest, room, hotel, stay_ongoing } = rows[0];
 
-  // Spent. Showing the card as though it still works is how a guest arrives
-  // believing they are checked in when someone already used their code.
-  if (guestId.status !== 'active') {
+  // Which face of the card is this? (§7 lifecycle)
+  //   active                          → the arrival QR pass
+  //   used + checked_in + stay live   → the in-stay photo pass, valid to check-out
+  //   anything else                   → the honest notice, never a live-looking card
+  let mode = null;
+  if (guestId.status === 'active') mode = 'arrival';
+  else if (guestId.status === 'used' && booking.status === 'checked_in' && stay_ongoing)
+    mode = 'instay';
+
+  if (!mode) {
+    const when = guestId.used_at ? new Date(guestId.used_at).toLocaleString('en-ZA') : null;
     return res
       .status(410)
       .send(
         notice(
-          'Already used',
-          `This guest ID was checked in on ${new Date(guestId.used_at).toLocaleString('en-ZA')}. ` +
+          'No longer valid',
+          (when ? `This guest ID was used on ${when} and the stay has ended. ` : `This guest ID has expired. `) +
             `Please speak to the front desk.`
         )
       );
   }
 
   try {
-    const html = await buildCardHtml({ hotel, booking, guest, guestId, room });
+    const html = await buildCardHtml({ hotel, booking, guest, guestId, room, mode, chrome: true });
     return res.status(200).send(html);
   } catch (err) {
     console.error('[sena] card render failed:', err);

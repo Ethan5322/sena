@@ -114,6 +114,17 @@ const JSBARCODE = fs.readFileSync(
     qr_data_uri: qr,
     barcode_data_uri: '',               // drawn in-page by JsBarcode below
     credit_data_uri: CREDIT,
+
+    // The sample shows the ARRIVAL face of the card (QR live, photo hidden) —
+    // the same defaults src/card.mjs uses for mode: 'arrival'.
+    badge_text: 'Single Use',
+    scan_label: 'Scan at reception',
+    show_qr: '',
+    show_photo: 'hidden',
+    photo_data_uri: '',
+    lifecycle_html:
+      'Valid for <b>one check-in only</b>. This ID is cancelled the moment it is ' +
+      'scanned and cannot be reused or shared.',
   });
 
   const left = html.match(/{{\s*[\w_]+\s*}}/g);

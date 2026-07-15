@@ -14,15 +14,21 @@
   MuleSoo QR stamp lives on the booking-confirmation PDF instead, where there is
   nothing to confuse it with.
 
-  Lifecycle: valid until scanned once (§7). knock_out_guest_id() burns it.
+  Lifecycle: the CODE is valid until spent once (§7) — at the desk or by self
+  check-in. After that the card renders as the in-stay photo pass (QR swapped
+  for the guest's photo) until check-out, when it expires and the photo is
+  purged. src/card.mjs decides which face of the card this render is.
 
-  Placeholders are filled by n8n / render-sample.cjs:
+  Placeholders are filled by src/card.mjs / render-sample.cjs:
     {{hotel_name}} {{brand_primary}} {{brand_accent}} {{brand_ink}}
     {{guest_name}} {{nationality}} {{guest_id_number}} {{verification_number}}
     {{room_name}} {{check_in}} {{check_out}} {{check_in_time}} {{check_out_time}}
     {{booking_reference}} {{qr_data_uri}} {{barcode_data_uri}} {{credit_data_uri}}
     {{font_faces}} {{hotel_logo_html}}  (an <img> if the hotel uploaded a logo,
     otherwise its initials — the crest is never empty)
+    {{badge_text}} {{scan_label}} {{lifecycle_html}}
+    {{show_qr}} {{show_photo}} {{photo_data_uri}}  (one of the two panels is
+    `hidden`; the QR before check-in, the photo after)
 -->
 <html>
 <head>
@@ -128,6 +134,14 @@
     box-shadow: 0 18px 40px -18px #00000088;
   }
   .qr img { width: 100%; height: 100%; display: block; }
+
+  /* After check-in the QR is spent, and this column becomes the guest's photo —
+     the card turns into the in-stay pass a clerk verifies by looking up. */
+  .photo {
+    width: 300px; height: 356px; border-radius: 20px; overflow: hidden;
+    background: #fff; padding: 10px; box-shadow: 0 18px 40px -18px #00000088;
+  }
+  .photo img { width: 100%; height: 100%; display: block; object-fit: cover; border-radius: 12px; }
   .scanme {
     margin-top: 14px; font-family: 'Sora'; font-weight: 700; font-size: 17px;
     letter-spacing: 3px; text-transform: uppercase; color: {{brand_accent}};
@@ -176,7 +190,7 @@
         <div class="hotel">{{hotel_name}}</div>
         <div class="kind">Guest Identification</div>
       </div>
-      <div class="badge">Single Use</div>
+      <div class="badge">{{badge_text}}</div>
     </div>
 
     <div class="rule"></div>
@@ -213,8 +227,11 @@
       </div>
 
       <div class="codes">
-        <div class="qr"><img src="{{qr_data_uri}}" alt="" /></div>
-        <div class="scanme">Scan at reception</div>
+        <!-- Exactly one of these two renders: the QR before check-in, the
+             guest's photo after. Never both — the one-scannable-code rule. -->
+        <div class="qr" {{show_qr}}><img src="{{qr_data_uri}}" alt="" /></div>
+        <div class="photo" {{show_photo}}><img src="{{photo_data_uri}}" alt="" /></div>
+        <div class="scanme">{{scan_label}}</div>
         <div class="vrf">{{verification_number}}</div>
       </div>
     </div>
@@ -226,10 +243,7 @@
           <div class="cap">Verification {{verification_number}}</div>
         </div>
 
-        <div class="single">
-          Valid for <b>one check-in only</b>. This ID is cancelled the moment it is
-          scanned and cannot be reused or shared.
-        </div>
+        <div class="single">{{lifecycle_html}}</div>
       </div>
 
       <div class="credit">

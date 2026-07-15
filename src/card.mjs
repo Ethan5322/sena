@@ -88,9 +88,27 @@ export function qrPayload({ guestId, booking, guest }) {
   });
 }
 
-/** Render the guest ID card to standalone HTML. No network, no Chrome. */
-export async function buildCardHtml({ hotel, booking, guest, guestId, room }) {
+/**
+ * Render the guest ID card to standalone HTML. No network, no Chrome.
+ *
+ * The card has two faces, decided by `mode`:
+ *
+ *   'arrival'  (default) — the QR pass. The code is live; the desk or the
+ *              self check-in page will burn it exactly once.
+ *   'instay'   — after check-in. The QR is spent, so the column shows the
+ *              guest's PHOTO instead (taken at self check-in), and the card
+ *              reads as the pass they carry until check-out. A guest checked
+ *              in at the desk has no photo; they keep the (dead) QR face.
+ *
+ * `chrome: true` appends the download bar — save as PNG or PDF, generated on
+ * the guest's own device (html2canvas + jsPDF, inlined like everything else;
+ * a CDN outage must not eat a guest's ID). Off for offline/PNG rendering so
+ * the sample images and print pipeline stay clean.
+ */
+export async function buildCardHtml({ hotel, booking, guest, guestId, room, mode = 'arrival', chrome = false }) {
   const payload = qrPayload({ guestId, booking, guest });
+  const instay = mode === 'instay';
+  const hasPhoto = instay && Boolean(guestId.photo);
 
   const qr = await QRCode.toDataURL(payload, {
     errorCorrectionLevel: 'M',
@@ -134,6 +152,19 @@ export async function buildCardHtml({ hotel, booking, guest, guestId, room }) {
     qr_data_uri: qr,
     barcode_data_uri: '', // drawn in-page below — JsBarcode needs a canvas
     credit_data_uri: credit,
+
+    // Which face of the card this is (see the doc comment above).
+    badge_text: instay ? 'Checked In' : 'Single Use',
+    scan_label: instay ? (hasPhoto ? 'Guest photo ID' : 'Checked in') : 'Scan at reception',
+    show_qr: hasPhoto ? 'hidden' : '',
+    show_photo: hasPhoto ? '' : 'hidden',
+    photo_data_uri: hasPhoto ? guestId.photo : '',
+    lifecycle_html: instay
+      ? `Checked in. This pass is valid until <b>check-out on ${day(booking.check_out)} ` +
+        `at ${String(hotel.check_out_time).slice(0, 5)}</b>, then it expires automatically ` +
+        `and the photo is deleted.`
+      : `Valid for <b>one check-in only</b>. This ID is cancelled the moment it is ` +
+        `scanned and cannot be reused or shared.`,
   });
 
   const unfilled = html.match(/\{\{\s*[\w_]+\s*\}\}/g);
@@ -163,6 +194,75 @@ export async function buildCardHtml({ hotel, booking, guest, guestId, room }) {
     img.src = c.toDataURL('image/png');
   })();
 </script>
+${chrome ? downloadBar(booking.reference) : ''}
 </body>`
   );
+}
+
+// ── The download bar ─────────────────────────────────────────────────────────
+// "Save as photo" / "Save as PDF", both generated ON THE GUEST'S DEVICE from
+// the very pixels they are looking at, and both downloading immediately on tap.
+// The bar itself is excluded from the capture, and hidden from print.
+//
+// Sizing note: the card page has a fixed 1370px layout (it is a document, not a
+// site), so a phone renders it zoomed out — the buttons are sized for THAT, not
+// for a desktop cursor.
+function downloadBar(reference) {
+  const html2canvas = fs.readFileSync(
+    path.join(ROOT, 'node_modules', 'html2canvas', 'dist', 'html2canvas.min.js'),
+    'utf8'
+  );
+  const jspdf = fs.readFileSync(
+    path.join(ROOT, 'node_modules', 'jspdf', 'dist', 'jspdf.umd.min.js'),
+    'utf8'
+  );
+  const file = `guest-id-${String(reference).replace(/[^\w-]/g, '')}`;
+
+  return `<div id="sena-actions">
+  <button id="dl-png" type="button">Save as photo</button>
+  <button id="dl-pdf" type="button">Save as PDF</button>
+</div>
+<style>
+  #sena-actions { position: fixed; left: 50%; bottom: 30px; transform: translateX(-50%);
+                  display: flex; gap: 24px; z-index: 9; }
+  #sena-actions button {
+    font: 600 40px/1 'DM Sans', system-ui, sans-serif; color: #0B1220;
+    background: #fff; border: 2px solid #0B122040; border-radius: 999px;
+    padding: 30px 52px; cursor: pointer; box-shadow: 0 14px 34px -14px #00000077;
+  }
+  #sena-actions button:disabled { opacity: .5; }
+  @media print { #sena-actions { display: none; } }
+</style>
+<script>${html2canvas}</script>
+<script>${jspdf}</script>
+<script>
+  (function () {
+    var FILE = ${JSON.stringify(file)};
+    function capture() {
+      return html2canvas(document.body, {
+        scale: 1,
+        ignoreElements: function (el) { return el.id === 'sena-actions'; }
+      });
+    }
+    function busy(btn, on) { btn.disabled = on; }
+    document.getElementById('dl-png').onclick = function () {
+      var btn = this; busy(btn, true);
+      capture().then(function (c) {
+        var a = document.createElement('a');
+        a.download = FILE + '.png';
+        a.href = c.toDataURL('image/png');
+        a.click();
+      }).finally(function () { busy(btn, false); });
+    };
+    document.getElementById('dl-pdf').onclick = function () {
+      var btn = this; busy(btn, true);
+      capture().then(function (c) {
+        // CR80: 85.6 × 54 mm — the PDF is the physical card, exactly.
+        var doc = new jspdf.jsPDF({ orientation: 'landscape', unit: 'mm', format: [85.6, 54] });
+        doc.addImage(c.toDataURL('image/jpeg', 0.95), 'JPEG', 0, 0, 85.6, 54);
+        doc.save(FILE + '.pdf');
+      }).finally(function () { busy(btn, false); });
+    };
+  })();
+</script>`;
 }

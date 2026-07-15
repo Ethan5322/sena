@@ -24,6 +24,7 @@ import { createRouter } from '../src/router.mjs';
 import { applyChargeSuccess } from '../src/payments.mjs';
 import { useServices } from '../src/services.mjs';
 import checkinHandler from '../api/sena/checkin.mjs';
+import cardHandler from '../api/sena/card.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -133,6 +134,21 @@ async function hit(body) {
 
 const PHOTO = 'data:image/jpeg;base64,' + 'A'.repeat(4000);
 
+/** Drive the real card page with a fake GET. */
+async function hitCard(v) {
+  const res = {
+    code: 200,
+    headers: {},
+    body: null,
+    setHeader(k, val) { this.headers[k] = val; },
+    status(c) { this.code = c; return this; },
+    json(o) { this.body = o; return this; },
+    send(b) { this.body = b; return this; },
+  };
+  await cardHandler({ method: 'GET', query: { v }, url: `/api/sena/card?v=${v}` }, res);
+  return res;
+}
+
 // ── A guest arriving today, paid up ───────────────────────────────────────────
 const today = await paidBooking({ checkIn: day(0), checkOut: day(2), callId: 'ci_today' });
 
@@ -140,6 +156,11 @@ const found = await hit({ action: 'lookup', code: today.code });
 ok(found.body.ok && found.body.state === 'ready', `lookup on arrival day → ready (${found.body.reference})`);
 ok(found.body.guest_name === 'Naledi Dlamini', 'the lookup shows the guest their own booking');
 ok(String(found.body.card_url).includes(today.code), 'and where their card will be');
+
+// ── The card before check-in: the arrival QR pass ─────────────────────────────
+const cardBefore = await hitCard(today.code);
+ok(cardBefore.code === 200 && cardBefore.body.includes('Single Use'), 'before check-in the card is the Single Use QR pass');
+ok(cardBefore.body.includes('Save as photo') && cardBefore.body.includes('Save as PDF'), 'with Save-as-photo and Save-as-PDF on it');
 
 // ── Everything that must be refused ───────────────────────────────────────────
 const ghost = await hit({ action: 'lookup', code: 'XXXXXXXXXXXX' });
@@ -196,6 +217,13 @@ ok(!desk.rows[0].ok, 'the desk scanner also refuses the spent code — one door,
 const backAgain = await hit({ action: 'lookup', code: today.code });
 ok(backAgain.body.state === 'already_checked_in', 'a re-lookup tells the guest they are already in, and offers the card');
 
+// ── The card after check-in: the in-stay PHOTO pass ──────────────────────────
+const cardDuring = await hitCard(today.code);
+ok(cardDuring.code === 200 && cardDuring.body.includes('Checked In'), 'after check-in the card renders as the Checked In pass');
+ok(cardDuring.body.includes(PHOTO), "with the guest's photo on it");
+ok(!/class="qr"\s*>/.test(cardDuring.body), 'and the spent QR panel is hidden — one scannable code, ever');
+ok(cardDuring.body.includes('valid until <b>check-out'), 'and it says how long it stays valid');
+
 // ── The POPIA promise: the photo dies with the stay ──────────────────────────
 await db.query(
   `update sena_bookings set check_in = current_date - 5, check_out = current_date - 2 where id = $1`,
@@ -217,6 +245,10 @@ const { rows: cxlGone } = await db.query(
   [cancelled.code]
 );
 ok(cxlGone[0].status === 'expired', "a cancelled booking's code is expired by the same purge");
+
+// ── The card after the stay: an honest notice, never a live-looking pass ─────
+const cardAfter = await hitCard(today.code);
+ok(cardAfter.code === 410 && String(cardAfter.body).includes('No longer valid'), 'after the stay the card page says so, instead of impersonating a valid pass');
 
 console.log(
   failures === 0
