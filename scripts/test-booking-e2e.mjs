@@ -59,9 +59,25 @@ async function tool(name, args = {}) {
 }
 
 // ── Boot the server the same way a developer does ───────────────────────────
+// Blanked variables stay blank: dev-server's loadEnv() only fills variables
+// that are ABSENT, and a present-but-empty one is present. That is how this
+// test keeps a developer's real .env.local out of the demo database:
+//   DATABASE_URL           demo mode, never the live Supabase
+//   SENA_DEFAULT_HOTEL_ID  the demo hotel's own id, never the live one — a
+//                          live uuid here makes /api/sena/hotel 404 in a demo
+//                          database that has never heard of it
+//   CALLMEBOT_*            or every test run WhatsApps the real owner's phone
 const server = spawn(process.execPath, [path.join(ROOT, 'scripts/dev-server.mjs')], {
   cwd: ROOT,
-  env: { ...process.env, PORT: String(PORT), DATABASE_URL: '', SENA_WEBHOOK_SECRET: SECRET },
+  env: {
+    ...process.env,
+    PORT: String(PORT),
+    DATABASE_URL: '',
+    SENA_DEFAULT_HOTEL_ID: '',
+    CALLMEBOT_PHONE: '',
+    CALLMEBOT_APIKEY: '',
+    SENA_WEBHOOK_SECRET: SECRET,
+  },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 
