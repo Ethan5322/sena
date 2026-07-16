@@ -605,12 +605,20 @@ export function createRouter({
     // The voice layer performs the handover; the router only says where to.
     //
     // ON webRTC THERE IS NOWHERE TO TRANSFER TO. A browser call cannot be patched
-    // through to a human's phone without a telephony leg, so today the agent says
-    // the number out loud, tells the guest a person will call them back, and the
-    // owner's email above is what actually gets them helped. When a SIP trunk is
-    // added (see voice-agent/agent/bot.py), this same field becomes a real
-    // transfer and nothing in the router changes.
-    return { ok: true, transfer_to: s.hotel.escalation_phone };
+    // through to a human's phone without a telephony leg. So the handover is:
+    // the alert above has ALREADY pinged the manager (WhatsApp + email), and
+    // Sena reads the manager's WhatsApp number aloud so the guest can message
+    // their situation directly — two sides converging on one chat. When a SIP
+    // trunk is added, transfer_to becomes a real transfer and nothing changes.
+    return {
+      ok: true,
+      transfer_to: s.hotel.escalation_phone,
+      whatsapp: s.hotel.escalation_whatsapp,
+      say:
+        `Tell the guest to WhatsApp the manager directly on ` +
+        `${s.hotel.escalation_whatsapp} — read the number digit by digit, twice — ` +
+        `and reassure them the manager has already been alerted.`,
+    };
   }
 
   async function end_call(args, ctx) {

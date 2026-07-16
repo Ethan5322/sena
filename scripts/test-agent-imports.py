@@ -173,6 +173,7 @@ def _prompt_renders():
             "cancellation_policy": "Free until 48 hours before arrival.",
             "early_late_policy": "Subject to availability.",
             "today": "2026-07-14",
+            "escalation_whatsapp": "+27688529333",
         }
     )
     assert "{{" not in rendered, "a placeholder survived rendering"

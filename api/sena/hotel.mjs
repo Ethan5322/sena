@@ -33,7 +33,7 @@ export default async function handler(req, res) {
     const { rows } = await database().query(
       `select id, name, address, currency, check_in_time, check_out_time,
               hold_minutes, cancellation_policy, early_late_policy,
-              escalation_phone
+              escalation_phone, escalation_whatsapp
          from sena_hotels
         where id = $1`,
       [hotelId]
@@ -61,6 +61,10 @@ export default async function handler(req, res) {
         // Sena has no clock. Without this she cannot resolve "tomorrow", and a
         // guest who says "next Friday" gets a booking in the wrong week.
         today: new Date().toISOString().slice(0, 10),
+        // The one contact detail Sena is ALLOWED to say aloud: on escalation
+        // she reads this out and asks the guest to WhatsApp their situation to
+        // the manager directly (see system-prompt.md, Escalation).
+        escalation_whatsapp: h.escalation_whatsapp,
       },
       // Not a prompt variable — the agent needs it when escalate_to_human fires
       // and there is no line to transfer to.
