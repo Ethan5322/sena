@@ -145,6 +145,13 @@ export async function issueConfirmationPackage(db, notifier, bookingReference, p
       already: true,
       reference: booking.reference,
       guest_id_number: guestId.guest_id_number,
+      verification_number: guestId.verification_number,
+      card_url: publicUrl
+        ? `${publicUrl}/api/sena/card?v=${encodeURIComponent(guestId.verification_number)}`
+        : null,
+      confirmation_url: publicUrl
+        ? `${publicUrl}/api/sena/confirmation?v=${encodeURIComponent(guestId.verification_number)}`
+        : null,
       delivered: true,
     };
   }
@@ -194,6 +201,9 @@ export async function issueConfirmationPackage(db, notifier, bookingReference, p
     ok: true,
     reference: booking.reference,
     guest_id_number: guestId.guest_id_number,
+    verification_number: guestId.verification_number,
+    card_url: pkg.card_url,
+    confirmation_url: pkg.confirmation_url,
     delivered: guestSend.ok,
   };
 }

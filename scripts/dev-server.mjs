@@ -81,6 +81,7 @@ const ROUTES = {
   '/api/sena/desk': { module: '../api/sena/desk.mjs', parseBody: false },
   '/api/sena/checkin': { module: '../api/sena/checkin.mjs', parseBody: true },
   '/api/sena/voice': { module: '../api/sena/voice.mjs', parseBody: true },
+  '/api/sena/chat': { module: '../api/sena/chat.mjs', parseBody: true },
   '/api/sena/cron': { module: '../api/sena/cron.mjs', parseBody: false },
   // Raw stream only — see the note at the top of this file.
   '/api/sena/paystack-webhook': { module: '../api/sena/paystack-webhook.mjs', parseBody: false },

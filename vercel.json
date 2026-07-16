@@ -3,7 +3,7 @@
 
   "functions": {
     "api/**/*.mjs": {
-      "includeFiles": "{templates,assets,node_modules/jsqr/dist,node_modules/jsbarcode/dist,node_modules/html2canvas/dist,node_modules/jspdf/dist}/**"
+      "includeFiles": "{templates/**,assets/**,voice-agent/agent-config.json,node_modules/jsqr/dist/**,node_modules/jsbarcode/dist/**,node_modules/html2canvas/dist/**,node_modules/jspdf/dist/**}"
     }
   },
 

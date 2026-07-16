@@ -387,6 +387,10 @@ export function createRouter({
       channel: notifier.channel,
       sent_to: guest.email,
       hold_minutes: s.hotel.hold_minutes,
+      // For CHAT, where a button can be shown. On a CALL, Sena never reads a
+      // URL aloud (system prompt) — the email remains the guest's copy.
+      pay_url: authorization_url,
+      check_in_code: guestId.verification_number,
     };
   }
 
@@ -456,6 +460,11 @@ export function createRouter({
       ok: true,
       reference: out.reference,
       guest_id_number: out.guest_id_number,
+      // For CHAT: the code and links can be SHOWN. On a call, Sena tells the
+      // guest the code is in their email and never reads it aloud.
+      check_in_code: out.verification_number,
+      card_url: out.card_url,
+      confirmation_url: out.confirmation_url,
       delivered: out.delivered,
       ...(out.already ? { already_sent: true } : {}),
     };

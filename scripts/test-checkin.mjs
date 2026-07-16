@@ -27,6 +27,7 @@ import { useServices } from '../src/services.mjs';
 import checkinHandler from '../api/sena/checkin.mjs';
 import cardHandler from '../api/sena/card.mjs';
 import voiceHandler from '../api/sena/voice.mjs';
+import chatHandler, { chatTools } from '../api/sena/chat.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -392,6 +393,41 @@ ok(stale.code === 200 && String(stale.body).includes('voice line is closed'), 'a
 const bye = await hitVoice('POST', { body: { url: '' }, secret: 'voice-test-secret' });
 const afterBye = await hitVoice('GET');
 ok(bye.code === 200 && afterBye.code === 200 && String(afterBye.body).includes('Check in with my code'), 'a clean sign-off flips to the holding page, which still routes the guest');
+
+// ── The chat door: same tools, same gates, typed ──────────────────────────────
+console.log('\n  ── the chat door ──');
+
+const tools = chatTools();
+ok(tools.length === 11, `chat speaks the same ELEVEN tools as the voice (${tools.length})`);
+ok(
+  tools.every((t) => t.type === 'function' && t.function.name && t.function.parameters),
+  'each translated cleanly into the OpenAI tool shape'
+);
+
+async function hitChat(method, body) {
+  const res = {
+    code: 200, headers: {}, body: null,
+    setHeader(k, v) { this.headers[k] = v; },
+    status(c) { this.code = c; return this; },
+    json(o) { this.body = o; return this; },
+    send(b) { this.body = b; return this; },
+  };
+  await chatHandler({ method, body, headers: {} }, res);
+  return res;
+}
+
+const chatPage = await hitChat('GET');
+ok(chatPage.code === 200 && String(chatPage.body).includes('never share card numbers in chat'),
+  'the chat page serves, and says out loud that cards never go in chat');
+
+const emptyChat = await hitChat('POST', { session: 'x', messages: [] });
+ok(emptyChat.code === 400, 'an empty conversation is refused');
+
+delete process.env.LLM_API_KEY;
+process.env.SENA_DEFAULT_HOTEL_ID = (await db.query(`select id from sena_hotels where is_demo`)).rows[0].id;
+const noBrain = await hitChat('POST', { session: 'x', messages: [{ role: 'user', content: 'hi' }] });
+ok(noBrain.code === 503 && /not configured/.test(noBrain.body.reason),
+  'a deployment without a brain answers honestly instead of hanging');
 
 // ── The late payment and the resold room ─────────────────────────────────────
 // A payment link outlives its 20-minute hold. If the guest pays overnight and
