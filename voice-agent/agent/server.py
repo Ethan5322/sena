@@ -138,9 +138,18 @@ async def _resolve_hotel(settings: Settings, hotel_id: str | None) -> str:
     return r.json()["hotel_id"]
 
 
+# One bot process per call means /connect is a fork bomb with a public URL
+# unless it is capped. Five concurrent calls is generous for one hotel and one
+# small box; a sixth caller hears "lines busy" instead of crashing the five.
+MAX_CALLS = int(os.environ.get("SENA_MAX_CALLS", "5"))
+
+
 @app.post("/connect")
 async def connect(req: ConnectRequest) -> dict:
     settings: Settings = app.state.settings
+
+    if len(BOTS) >= MAX_CALLS:
+        raise HTTPException(503, "all reception lines are busy — please try again in a minute")
 
     hotel_id = await _resolve_hotel(
         settings, req.hotel_id or settings.default_hotel_id or None

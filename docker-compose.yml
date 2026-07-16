@@ -77,6 +77,9 @@ services:
       PIPER_VOICE: ${PIPER_VOICE:-/voices/en_GB-cori-medium.onnx}
 
       SENA_ALLOWED_ORIGINS: ${SENA_ALLOWED_ORIGINS:-*}
+      # /connect spawns one bot process per call; uncapped, it is a fork bomb
+      # with a public URL. A sixth simultaneous caller hears "lines busy".
+      SENA_MAX_CALLS: ${SENA_MAX_CALLS:-5}
     extra_hosts:
       # Linux only; harmless on macOS and Windows.
       - "host.docker.internal:host-gateway"

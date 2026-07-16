@@ -191,6 +191,13 @@
     }
 
     button.onclick = startCall;
+
+    // One tap from the QR, not two: the landing page's "Call Sena" arrives
+    // with ?call=1 and the call starts itself. The browser still asks for the
+    // microphone — that prompt is the guest's consent and cannot (and should
+    // not) be skipped. If autoplay policy holds anything back, the button is
+    // still right there.
+    if (new URLSearchParams(location.search).get('call') === '1') startCall();
   </script>
 </body>
 </html>

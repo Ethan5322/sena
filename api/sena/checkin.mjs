@@ -85,6 +85,28 @@ function stateOf(row) {
   return 'ready';
 }
 
+// Best-effort per-IP throttle. The codes are 59-bit so guessing is hopeless —
+// what this blunts is a bot burning database connections and email quota. It is
+// per warm lambda instance (Vercel gives no shared state for free), which is
+// exactly the honest amount of protection a free tier can buy: enough to stop
+// a naive script, documented as not being a WAF.
+const BUCKET = new Map(); // ip → recent request timestamps
+const RATE_LIMIT = 20;
+const RATE_WINDOW_MS = 60_000;
+
+function throttled(req) {
+  const ip =
+    String(req.headers?.['x-forwarded-for'] || '').split(',')[0].trim() ||
+    req.socket?.remoteAddress ||
+    'unknown';
+  const now = Date.now();
+  const seen = (BUCKET.get(ip) || []).filter((t) => now - t < RATE_WINDOW_MS);
+  seen.push(now);
+  BUCKET.set(ip, seen);
+  if (BUCKET.size > 5000) BUCKET.clear(); // memory guard beats precision here
+  return seen.length > RATE_LIMIT;
+}
+
 export default async function handler(req, res) {
   res.setHeader('X-Robots-Tag', 'noindex, nofollow');
   res.setHeader('Cache-Control', 'private, no-store');
@@ -95,6 +117,10 @@ export default async function handler(req, res) {
   }
 
   if (req.method !== 'POST') return res.status(405).json({ ok: false, reason: 'method' });
+
+  if (throttled(req)) {
+    return res.status(429).json({ ok: false, reason: 'Too many attempts — please wait a minute and try again.' });
+  }
 
   const body = req.body || {};
   const code = String(body.code || '').trim().toUpperCase();

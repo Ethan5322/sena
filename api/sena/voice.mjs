@@ -25,9 +25,19 @@ export default async function handler(req, res) {
   const target = process.env.SENA_VOICE_URL;
 
   if (target) {
+    // ?call=1 → reception.html starts the call by itself: the guest taps
+    // "Call Sena" once and the next thing they do is talk.
+    let dest = target;
+    try {
+      const u = new URL(target);
+      u.searchParams.set('call', '1');
+      dest = u.toString();
+    } catch {
+      // Not a parseable URL — pass it through untouched rather than break it.
+    }
     res.setHeader('Cache-Control', 'no-store');
     res.statusCode = 302;
-    res.setHeader('Location', target);
+    res.setHeader('Location', dest);
     return res.end();
   }
 
