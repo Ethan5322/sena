@@ -60,18 +60,23 @@ class Settings:
     livekit_api_key: str
     livekit_api_secret: str
 
-    # The brain. Two providers, one seam:
+    # The brain. Three providers, one seam:
     #
-    #   anthropic  Claude — the production brain, and the only paid thing in the
-    #              stack. Quick, and reliable with eleven tools.
-    #   ollama     a model running free on your own machine. Exists so the whole
-    #              call flow can be proven without an API key — but be honest
-    #              with yourself about what it is: a small local model is SLOW on
-    #              a modest CPU (tens of seconds a turn on a 2-core laptop) and
-    #              clumsy with tools. It proves the plumbing, not the product.
-    #              Never demo it to a client.
+    #   anthropic  Claude — the production brain. Quick, and the most reliable
+    #              with eleven tools. Paid, pay-as-you-go.
+    #   openai     any OpenAI-COMPATIBLE hosted API. The reason this exists is
+    #              the free tiers: Groq serves Llama 3.3 70B at real speed for
+    #              R0, which is a demo-quality brain while there is no budget —
+    #              see .env.example. Becomes Claude by changing two env vars.
+    #   ollama     a model running free on your own machine. Proves the whole
+    #              call flow with no account at all — but a small local model is
+    #              SLOW on a modest CPU and clumsy with tools. It proves the
+    #              plumbing, not the product. Never demo it to a client.
     llm_provider: str
     anthropic_api_key: str
+    llm_model: str
+    llm_base_url: str
+    llm_api_key: str
     ollama_model: str
     ollama_base_url: str
 
@@ -87,18 +92,26 @@ class Settings:
     @classmethod
     def from_env(cls) -> "Settings":
         provider = os.environ.get("LLM_PROVIDER", "anthropic").strip().lower()
-        if provider not in ("anthropic", "ollama"):
-            raise RuntimeError(f"LLM_PROVIDER must be 'anthropic' or 'ollama', not {provider!r}")
+        if provider not in ("anthropic", "openai", "ollama"):
+            raise RuntimeError(
+                f"LLM_PROVIDER must be 'anthropic', 'openai' or 'ollama', not {provider!r}"
+            )
 
         return cls(
             sena_api_url=_require("SENA_API_URL"),
             sena_secret=_require("SENA_WEBHOOK_SECRET"),
             llm_provider=provider,
-            # The key is only demanded when the provider actually needs it — the
-            # whole point of the ollama path is testing without one.
+            # Keys are only demanded when the provider actually needs them — the
+            # whole point of the free paths is starting without one.
             anthropic_api_key=(
                 _require("ANTHROPIC_API_KEY") if provider == "anthropic"
                 else os.environ.get("ANTHROPIC_API_KEY", "").strip()
+            ),
+            llm_model=os.environ.get("LLM_MODEL", "llama-3.3-70b-versatile").strip(),
+            llm_base_url=os.environ.get("LLM_BASE_URL", "https://api.groq.com/openai/v1").strip(),
+            llm_api_key=(
+                _require("LLM_API_KEY") if provider == "openai"
+                else os.environ.get("LLM_API_KEY", "").strip()
             ),
             ollama_model=os.environ.get("OLLAMA_MODEL", "llama3.2:1b").strip(),
             ollama_base_url=os.environ.get(

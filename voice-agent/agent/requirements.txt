@@ -25,7 +25,10 @@
 # scripts/test-agent-imports.py is what proves this file and bot.py still agree.
 # Run it after any bump — it takes two seconds and it is the difference between
 # finding this on your laptop and finding it with a guest on the line.
-pipecat-ai[livekit,whisper,silero,anthropic]==1.5.0
+#   openai   → any OpenAI-compatible hosted API — this is how the FREE demo
+#              brain (Groq's Llama 3.3 70B free tier) plugs in. Ollama rides
+#              the same wheels.
+pipecat-ai[livekit,whisper,silero,anthropic,openai]==1.5.0
 
 # Piper — Sena's voice. Installs as a pip package with a `piper` console script,
 # so there is no binary to download and no platform-specific release to track. It

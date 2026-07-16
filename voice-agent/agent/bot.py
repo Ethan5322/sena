@@ -49,6 +49,7 @@ from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
 from pipecat.services.anthropic.llm import AnthropicLLMService
 from pipecat.services.ollama.llm import OLLamaLLMService
+from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.whisper.stt import WhisperSTTService
 from pipecat.transcriptions.language import Language
 from pipecat.transports.livekit.transport import LiveKitParams, LiveKitTransport
@@ -115,11 +116,12 @@ async def run_bot(room: str, hotel_id: str, token: str) -> None:
         piper_binary=settings.piper_binary,
     )
 
-    # The brain. Claude in production; a free local model through Ollama when
-    # there is no API key yet. Same tools, same context, same pipeline — the
-    # provider is one constructor. Both take temperature 0.3, because this agent
-    # quotes prices and policies and creativity here is a defect regardless of
-    # who is thinking.
+    # The brain. Claude in production; a hosted free tier (Groq et al, via the
+    # OpenAI-compatible path) while there is no budget; a local model through
+    # Ollama when there is no account at all. Same tools, same context, same
+    # pipeline — the provider is one constructor. All take temperature 0.3,
+    # because this agent quotes prices and policies and creativity here is a
+    # defect regardless of who is thinking.
     if settings.llm_provider == "ollama":
         log.warning(
             "brain: OLLAMA (%s) — free and local. Expect slow turns on a small "
@@ -130,6 +132,20 @@ async def run_bot(room: str, hotel_id: str, token: str) -> None:
             model=settings.ollama_model,
             base_url=settings.ollama_base_url,
             params=OLLamaLLMService.InputParams(temperature=cfg.temperature),
+        )
+    elif settings.llm_provider == "openai":
+        log.info(
+            "brain: OpenAI-compatible — %s at %s (a hosted free tier is a real "
+            "demo brain; swap to Claude by changing LLM_PROVIDER when there is "
+            "budget)",
+            settings.llm_model,
+            settings.llm_base_url,
+        )
+        llm = OpenAILLMService(
+            api_key=settings.llm_api_key,
+            base_url=settings.llm_base_url,
+            model=settings.llm_model,
+            params=OpenAILLMService.InputParams(temperature=cfg.temperature),
         )
     else:
         llm = AnthropicLLMService(
@@ -167,15 +183,17 @@ async def run_bot(room: str, hotel_id: str, token: str) -> None:
             args = params.arguments or {}
             result = await client.call_tool(name, args, call)
 
-            # There is no line to transfer to on a browser call. Rather than let
-            # Sena silently drop an upset guest, hand her the number and let her
-            # say it out loud. The owner has already been emailed by the router.
+            # There is no line to transfer to on a browser call. The router's
+            # `say` carries the real handover (WhatsApp the manager directly —
+            # the number is read aloud, digit by digit); this only fills in if
+            # an older router said nothing. The owner has already been pinged.
             if name == "escalate_to_human":
                 result.setdefault("transfer_to", escalation_phone)
-                result["say"] = (
+                result.setdefault(
+                    "say",
                     "There is no way to transfer this browser call. Give the guest "
                     f"this number — {result.get('transfer_to')} — tell them a person "
-                    "will call them back, and end the call."
+                    "will call them back, and end the call.",
                 )
 
             await params.result_callback(result)
