@@ -1,0 +1,29 @@
+# Sena — the test suite, on every push.
+#
+# The suite stands up a real Postgres (PGlite, in-process), applies the exact
+# SQL a hotel pastes into Supabase, and attacks every gate that protects a
+# booking. Until now it only ran on one laptop; this makes "it passed" a
+# property of the repository instead of a memory of the machine.
+#
+# The Python voice agent's checks skip themselves when Pipecat is not
+# installed (scripts/test-agent.mjs is loud about it) — installing 2 GB of
+# Torch per push buys nothing the import test on the laptop does not.
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
