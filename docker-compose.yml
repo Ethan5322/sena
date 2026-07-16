@@ -19,6 +19,12 @@
 services:
   livekit:
     image: livekit/livekit-server:latest
+    # Behind a profile because the default setup dials LiveKit CLOUD (see
+    # LIVEKIT_URL below) and this container would just idle — worse, on Windows
+    # its UDP media range regularly lands inside a reserved port block after a
+    # reboot and the bind fails, taking the whole `up` down with it.
+    # No cloud account? `npm run voice:local` enables it.
+    profiles: ["local-livekit"]
     command: --config /etc/livekit.yaml --node-ip ${LIVEKIT_NODE_IP:-127.0.0.1}
     # LIVEKIT_NODE_IP is the address LiveKit advertises to browsers for the
     # media connection. 127.0.0.1 only works for a browser on this machine; a
@@ -38,8 +44,9 @@ services:
       context: ./voice-agent
       dockerfile: agent/Dockerfile
     restart: unless-stopped
-    depends_on:
-      - livekit
+    # No depends_on: livekit is profile-gated, and compose refuses a dependency
+    # on a disabled service. The bot only dials LiveKit when a call starts, so
+    # start order never mattered anyway.
     ports:
       - "8080:8080"            # the switchboard, and the Call Reception page
     environment:

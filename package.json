@@ -8,6 +8,7 @@
         "call": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/live-test.ps1",
         "dev": "node scripts/dev-server.mjs",
         "voice": "docker compose --env-file .env.local up --build",
+        "voice:local": "docker compose --env-file .env.local --profile local-livekit up --build",
         "qr": "node scripts/make-call-qr.mjs",
         "samples": "node scripts/render-sample.cjs",
         "test": "npm run test:db && npm run test:install && npm run test:router && npm run test:card && npm run test:checkin && npm run test:confirmation && npm run test:dashboard && npm run test:tools && npm run test:e2e && npm run test:agent",

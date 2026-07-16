@@ -142,8 +142,14 @@ npm run dev            # → http://localhost:3000
 **Terminal 2 — the voice** (LiveKit, Whisper, Claude, Piper):
 
 ```bash
-npm run voice          # → docker compose up --build
+npm run voice          # → docker compose up --build (the agent; dials LiveKit Cloud)
+npm run voice:local    # same, plus a self-hosted LiveKit server — use this if you
+                       # have no LiveKit Cloud account (LIVEKIT_URL unset/ws://livekit:7880)
 ```
+
+`npm run voice` no longer starts the local LiveKit container: with LiveKit Cloud
+configured it only idled, and on Windows its UDP media ports routinely land in a
+reserved port range after a reboot and kill the whole startup.
 
 The first build takes **five to fifteen minutes** and downloads about 2 GB: Whisper's
 weights, Torch, and a Piper voice. It is baked into the image on purpose — downloading
