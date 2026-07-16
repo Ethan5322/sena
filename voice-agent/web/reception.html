@@ -133,6 +133,32 @@
       orb.dataset.live = String(live);
     }
 
+    // A ring-back tone for the seconds between joining the room and Sena
+    // arriving in it (her process boots per call; on a small box that is a
+    // 5–15 second gap). Silence there reads as a dead line — a guest already
+    // hung up over it. Ringing reads as a phone doing phone things.
+    let ringCtx = null, ringTimer = null, ringDeadline = null;
+    function startRingback() {
+      try {
+        ringCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const burst = () => {
+          if (!ringCtx) return;
+          const osc = ringCtx.createOscillator(), gain = ringCtx.createGain();
+          osc.frequency.value = 425;
+          gain.gain.value = 0.06;
+          osc.connect(gain); gain.connect(ringCtx.destination);
+          osc.start(); osc.stop(ringCtx.currentTime + 1.0);
+        };
+        burst();
+        ringTimer = setInterval(burst, 4000);
+      } catch (e) { /* no audio context — ring silently */ }
+    }
+    function stopRingback() {
+      if (ringTimer) { clearInterval(ringTimer); ringTimer = null; }
+      if (ringDeadline) { clearTimeout(ringDeadline); ringDeadline = null; }
+      if (ringCtx) { ringCtx.close(); ringCtx = null; }
+    }
+
     async function startCall() {
       button.disabled = true;
       say('Connecting…');
@@ -161,13 +187,35 @@
         // where Sena talks and nobody answers, so we check and say so.
         await room.localParticipant.setMicrophoneEnabled(true);
 
-        say('Connected — Sena is listening', { live: true });
+        // The guest is in the room; Sena may not be yet. Say "ringing" — not
+        // "listening" — until her participant actually arrives, or the guest
+        // reads "Sena is listening" at an empty room and rightly concludes
+        // the thing is broken.
         button.textContent = 'End call';
         button.classList.add('hangup');
         button.disabled = false;
         button.onclick = () => endCall();
 
+        const senaArrived = () => {
+          stopRingback();
+          say('Connected — Sena is listening', { live: true });
+        };
+        if (room.remoteParticipants.size > 0) {
+          senaArrived();
+        } else {
+          say('Ringing…');
+          startRingback();
+          room.on(LivekitClient.RoomEvent.ParticipantConnected, senaArrived);
+          ringDeadline = setTimeout(() => {
+            if (room && room.remoteParticipants.size === 0) {
+              endCall({ silent: true });
+              say('Sena did not pick up — please try again, or phone the hotel directly.', { error: true });
+            }
+          }, 60000);
+        }
+
       } catch (err) {
+        stopRingback();
         console.error(err);
         const denied = err && /permission|not allowed|denied/i.test(err.message || '');
         say(
@@ -181,6 +229,7 @@
     }
 
     async function endCall({ silent = false } = {}) {
+      stopRingback();
       if (room) { await room.disconnect(); room = null; }
       button.textContent = 'Call Reception';
       button.classList.remove('hangup');

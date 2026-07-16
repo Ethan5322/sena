@@ -54,6 +54,15 @@ WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 # guest mid-sentence.
 BOTS: dict[str, asyncio.subprocess.Process] = {}
 
+# The standby bot: booted, models loaded, waiting for a room on stdin. A cold
+# bot.py takes 30–60 seconds to boot on a small box, and the guest pays that in
+# silence — a real guest hung up before Sena arrived. One process is kept warm
+# ahead of the call; /connect hands it the room and warms the next. Costs a few
+# hundred MB of resident RAM while idle; SENA_WARM_BOT=0 turns it off on a box
+# that cannot spare it.
+WARM_ENABLED = os.environ.get("SENA_WARM_BOT", "1") != "0"
+STANDBY: dict = {"proc": None, "ready": False}
+
 
 class ConnectRequest(BaseModel):
     hotel_id: str | None = None
@@ -66,7 +75,11 @@ async def lifespan(app: FastAPI):
     # where Sena greets someone warmly and then goes silent forever.
     app.state.settings = Settings.from_env()
     log.info("sena switchboard up — api=%s livekit=%s", app.state.settings.sena_api_url, app.state.settings.livekit_url)
+    await _spawn_standby()
     yield
+    standby = STANDBY["proc"]
+    if standby is not None and standby.returncode is None:
+        standby.kill()
     for room, proc in list(BOTS.items()):
         if proc.returncode is None:
             log.info("killing bot for %s", room)
@@ -88,7 +101,55 @@ app.add_middleware(
 
 @app.get("/health")
 async def health() -> dict:
-    return {"ok": True, "bots": len(BOTS)}
+    return {"ok": True, "bots": len(BOTS), "standby": bool(STANDBY["ready"])}
+
+
+async def _spawn_standby() -> None:
+    """Boot the next call's bot now, so no guest ever waits for Python."""
+    if not WARM_ENABLED:
+        return
+    existing = STANDBY["proc"]
+    if existing is not None and existing.returncode is None:
+        return  # one is already warming or warm
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable,
+        str(Path(__file__).resolve().parent / "bot.py"),
+        "--warm",
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,  # carries exactly one line: READY
+        cwd=str(Path(__file__).resolve().parent),
+    )
+    STANDBY["proc"], STANDBY["ready"] = proc, False
+    asyncio.create_task(_watch_standby(proc))
+
+
+async def _watch_standby(proc: asyncio.subprocess.Process) -> None:
+    line = await proc.stdout.readline()
+    if line.strip() == b"READY" and STANDBY["proc"] is proc:
+        STANDBY["ready"] = True
+        log.info("standby bot warm (pid %s)", proc.pid)
+        return
+    # It died booting, or printed nonsense. Either way it is not a standby.
+    code = await proc.wait()
+    if STANDBY["proc"] is proc:
+        STANDBY["proc"], STANDBY["ready"] = None, False
+        log.error("standby bot exited %s before READY — retrying in 30s", code)
+        await asyncio.sleep(30)
+        if STANDBY["proc"] is None:
+            await _spawn_standby()
+
+
+async def _spawn_standby_later(delay: float) -> None:
+    await asyncio.sleep(delay)
+    await _spawn_standby()
+
+
+def _take_standby() -> asyncio.subprocess.Process | None:
+    proc = STANDBY["proc"]
+    if not (WARM_ENABLED and STANDBY["ready"] and proc and proc.returncode is None):
+        return None
+    STANDBY["proc"], STANDBY["ready"] = None, False
+    return proc
 
 
 @app.get("/")
@@ -168,21 +229,42 @@ async def connect(req: ConnectRequest) -> dict:
     guest_token = token("guest")
     bot_token = token("sena")
 
-    # The bot joins first. If it started after the guest, the guest would sit in
-    # an empty room listening to nothing, which reads as a dropped call — and the
-    # on_first_participant_joined greeting would never fire.
-    proc = await asyncio.create_subprocess_exec(
-        sys.executable,
-        str(Path(__file__).resolve().parent / "bot.py"),
-        "--room", room,
-        "--hotel-id", hotel_id,
-        "--token", bot_token,
-        cwd=str(Path(__file__).resolve().parent),
-    )
+    # The bot must be in the room before the guest loses patience. The standby
+    # is already booted — models loaded — and only has to join; hand it the room
+    # over stdin and warm its replacement. Fall back to a cold spawn when the
+    # standby is not there (first seconds after boot, or SENA_WARM_BOT=0) — slow,
+    # but slow beats busy.
+    job = {"room": room, "hotel_id": hotel_id, "token": bot_token}
+    proc = _take_standby()
+    if proc is not None:
+        try:
+            proc.stdin.write((json.dumps(job) + "\n").encode())
+            await proc.stdin.drain()
+            proc.stdin.close()
+            # Its stdout pipe stays ours; drain it forever so the bot can never
+            # block on a full pipe, whatever it prints.
+            asyncio.create_task(proc.stdout.read())
+            log.info("call %s → hotel %s (warm bot pid %s)", room, hotel_id, proc.pid)
+        except (BrokenPipeError, ConnectionResetError):
+            log.error("standby bot pid %s died at handoff — cold-spawning", proc.pid)
+            proc = None
+    if proc is None:
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable,
+            str(Path(__file__).resolve().parent / "bot.py"),
+            "--room", room,
+            "--hotel-id", hotel_id,
+            "--token", bot_token,
+            cwd=str(Path(__file__).resolve().parent),
+        )
+        log.info("call %s → hotel %s (cold bot pid %s)", room, hotel_id, proc.pid)
     BOTS[room] = proc
     asyncio.create_task(_reap(room, proc))
-
-    log.info("call %s → hotel %s (bot pid %s)", room, hotel_id, proc.pid)
+    # The replacement standby waits half a minute: its torch imports would
+    # otherwise fight THIS call's room join and greeting for the two cores this
+    # box has. A second caller inside that window gets a cold bot — slow beats
+    # stealing the current guest's first words.
+    asyncio.create_task(_spawn_standby_later(30))
 
     # The PUBLIC address, never the bot's. The browser is not on the docker
     # network and cannot resolve "livekit" — see Settings for the split.

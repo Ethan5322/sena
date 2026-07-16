@@ -65,9 +65,89 @@ logging.basicConfig(
 log = logging.getLogger("sena.bot")
 
 
-async def run_bot(room: str, hotel_id: str, token: str) -> None:
-    settings = Settings.from_env()
-    cfg = AgentConfig.load()
+class WarmParts:
+    """Everything a call needs that does not need the call.
+
+    On a small box these constructions cost 15–60 seconds (Whisper dominates),
+    and a guest in a silent room pays every one of them. Building them is
+    separated from run_bot so the standby process (see warm_and_wait) can do it
+    BEFORE a guest exists. The only work left for the call itself is the hotel
+    context fetch and the LiveKit room join.
+    """
+
+    def __init__(self) -> None:
+        self.settings = Settings.from_env()
+        self.cfg = AgentConfig.load()
+
+        # Silero decides when the guest has stopped talking. Without a VAD,
+        # Whisper transcribes the pauses too and Sena interrupts people.
+        self.vad = SileroVADAnalyzer()
+
+        # Local Whisper — the model loads HERE, at construction. 'small' is the
+        # floor: 'base' mishears letters, and a guest spelling out an email
+        # address into a model that hears "m" as "n" produces a booking that
+        # never reaches them.
+        #
+        # `language` is Pipecat's Language enum, not a string — passing "en"
+        # here is accepted silently and then ignored, which is the worst kind
+        # of wrong.
+        self.stt = WhisperSTTService(
+            model=self.settings.whisper_model or self.cfg.stt_model,
+            language=Language(self.cfg.stt_language),
+        )
+
+        self.tts = PiperTTSService(
+            voice_model=self.settings.piper_voice,
+            piper_binary=self.settings.piper_binary,
+        )
+
+        # The brain. Claude in production; a hosted free tier (Groq et al, via
+        # the OpenAI-compatible path) while there is no budget; a local model
+        # through Ollama when there is no account at all. Same tools, same
+        # context, same pipeline — the provider is one constructor. All take
+        # temperature 0.3, because this agent quotes prices and policies and
+        # creativity here is a defect regardless of who is thinking.
+        settings, cfg = self.settings, self.cfg
+        if settings.llm_provider == "ollama":
+            log.warning(
+                "brain: OLLAMA (%s) — free and local. Expect slow turns on a small "
+                "CPU and clumsy tool use. This proves the plumbing, not the product.",
+                settings.ollama_model,
+            )
+            self.llm = OLLamaLLMService(
+                model=settings.ollama_model,
+                base_url=settings.ollama_base_url,
+                params=OLLamaLLMService.InputParams(temperature=cfg.temperature),
+            )
+        elif settings.llm_provider == "openai":
+            log.info(
+                "brain: OpenAI-compatible — %s at %s (a hosted free tier is a real "
+                "demo brain; swap to Claude by changing LLM_PROVIDER when there is "
+                "budget)",
+                settings.llm_model,
+                settings.llm_base_url,
+            )
+            self.llm = OpenAILLMService(
+                api_key=settings.llm_api_key,
+                base_url=settings.llm_base_url,
+                model=settings.llm_model,
+                params=OpenAILLMService.InputParams(temperature=cfg.temperature),
+            )
+        else:
+            self.llm = AnthropicLLMService(
+                api_key=settings.anthropic_api_key,
+                model=cfg.model,
+                params=AnthropicLLMService.InputParams(
+                    temperature=cfg.temperature,
+                    max_tokens=cfg.max_tokens,
+                ),
+            )
+
+
+async def run_bot(room: str, hotel_id: str, token: str, parts: WarmParts | None = None) -> None:
+    parts = parts or WarmParts()  # cold spawn builds everything now, slowly
+    settings = parts.settings
+    cfg = parts.cfg
     client = SenaClient(settings.sena_api_url, settings.sena_secret)
 
     # The identity of this call, as far as the database is concerned. The room
@@ -87,6 +167,8 @@ async def run_bot(room: str, hotel_id: str, token: str) -> None:
     escalation_phone = context_data.get("escalation_phone")
 
     # ── The pipeline ────────────────────────────────────────────────────────
+    # The transport is the one heavy piece that cannot be prebuilt: it carries
+    # the room name and token, and those only exist once a guest calls.
     transport = LiveKitTransport(
         url=settings.livekit_url,
         token=token,
@@ -94,68 +176,13 @@ async def run_bot(room: str, hotel_id: str, token: str) -> None:
         params=LiveKitParams(
             audio_in_enabled=True,
             audio_out_enabled=True,
-            # Silero decides when the guest has stopped talking. Without a VAD,
-            # Whisper transcribes the pauses too and Sena interrupts people.
-            vad_analyzer=SileroVADAnalyzer(),
+            vad_analyzer=parts.vad,
         ),
     )
 
-    # Local Whisper. 'small' is the floor: 'base' mishears letters, and a guest
-    # spelling out an email address into a model that hears "m" as "n" produces a
-    # booking that never reaches them.
-    #
-    # `language` is Pipecat's Language enum, not a string — passing "en" here is
-    # accepted silently and then ignored, which is the worst kind of wrong.
-    stt = WhisperSTTService(
-        model=settings.whisper_model or cfg.stt_model,
-        language=Language(cfg.stt_language),
-    )
-
-    tts = PiperTTSService(
-        voice_model=settings.piper_voice,
-        piper_binary=settings.piper_binary,
-    )
-
-    # The brain. Claude in production; a hosted free tier (Groq et al, via the
-    # OpenAI-compatible path) while there is no budget; a local model through
-    # Ollama when there is no account at all. Same tools, same context, same
-    # pipeline — the provider is one constructor. All take temperature 0.3,
-    # because this agent quotes prices and policies and creativity here is a
-    # defect regardless of who is thinking.
-    if settings.llm_provider == "ollama":
-        log.warning(
-            "brain: OLLAMA (%s) — free and local. Expect slow turns on a small "
-            "CPU and clumsy tool use. This proves the plumbing, not the product.",
-            settings.ollama_model,
-        )
-        llm = OLLamaLLMService(
-            model=settings.ollama_model,
-            base_url=settings.ollama_base_url,
-            params=OLLamaLLMService.InputParams(temperature=cfg.temperature),
-        )
-    elif settings.llm_provider == "openai":
-        log.info(
-            "brain: OpenAI-compatible — %s at %s (a hosted free tier is a real "
-            "demo brain; swap to Claude by changing LLM_PROVIDER when there is "
-            "budget)",
-            settings.llm_model,
-            settings.llm_base_url,
-        )
-        llm = OpenAILLMService(
-            api_key=settings.llm_api_key,
-            base_url=settings.llm_base_url,
-            model=settings.llm_model,
-            params=OpenAILLMService.InputParams(temperature=cfg.temperature),
-        )
-    else:
-        llm = AnthropicLLMService(
-            api_key=settings.anthropic_api_key,
-            model=cfg.model,
-            params=AnthropicLLMService.InputParams(
-                temperature=cfg.temperature,
-                max_tokens=cfg.max_tokens,
-            ),
-        )
+    stt = parts.stt
+    tts = parts.tts
+    llm = parts.llm
 
     # ── The eleven tools ────────────────────────────────────────────────────
     # Registered from agent-config.json, so the names the model can call and the
@@ -177,6 +204,7 @@ async def run_bot(room: str, hotel_id: str, token: str) -> None:
     # end_call is the one tool with a side effect on the pipeline itself, so the
     # bot has to watch for it rather than just forwarding it to the router.
     hang_up = asyncio.Event()
+    greeted = asyncio.Event()
 
     def make_handler(name: str):
         async def handler(params):
@@ -247,6 +275,7 @@ async def run_bot(room: str, hotel_id: str, token: str) -> None:
         # thousand calls not at all. So we say it verbatim, as audio, before the
         # model has any say in the matter.
         log.info("guest joined %s — greeting", room)
+        greeted.set()
         await task.queue_frames([TTSSpeakFrame(greeting)])
 
     @transport.event_handler("on_participant_left")
@@ -265,13 +294,25 @@ async def run_bot(room: str, hotel_id: str, token: str) -> None:
             log.warning("%s hit max duration — hanging up", room)
         await task.queue_frames([EndFrame()])
 
+    async def _watch_lonely() -> None:
+        """Nobody ever arrived. A guest who gave up during the connect is not
+        coming back through this room; free its slot instead of idling out the
+        pipeline's five-minute timeout."""
+        try:
+            await asyncio.wait_for(greeted.wait(), timeout=90)
+        except asyncio.TimeoutError:
+            log.warning("%s: no guest within 90s — hanging up", room)
+            await task.queue_frames([EndFrame()])
+
     runner = PipelineRunner()
     watcher = asyncio.create_task(_watch_hangup())
+    lonely = asyncio.create_task(_watch_lonely())
 
     try:
         await runner.run(task)
     finally:
         watcher.cancel()
+        lonely.cancel()
 
         # The transcript, for quality review and disputes (CLAUDE.md §9). Consent
         # was stated in the greeting — which is the greeting we just spoke,
@@ -286,15 +327,50 @@ async def run_bot(room: str, hotel_id: str, token: str) -> None:
         log.info("call %s finished", room)
 
 
+def warm_and_wait() -> tuple[dict, WarmParts]:
+    """Boot everything a call needs BEFORE there is a call.
+
+    On a small box the imports above plus the model constructions cost 30–60
+    seconds — billed, without this, to a guest sitting in a silent room (a real
+    guest hung up waiting; that is where this function comes from). The
+    switchboard spawns this process ahead of time; we build every room-agnostic
+    piece of the pipeline, announce READY on stdout, and block until a room
+    assignment arrives on stdin. stdout is the protocol channel — all logging
+    goes to stderr, so the one READY line is all the switchboard will ever read.
+    """
+    parts = WarmParts()
+
+    print("READY", flush=True)
+    line = sys.stdin.readline()
+    if not line:
+        # The switchboard closed without work — shutdown, not an error.
+        sys.exit(0)
+    return json.loads(line), parts
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Sena — one voice call")
-    parser.add_argument("--room", required=True)
-    parser.add_argument("--hotel-id", required=True)
-    parser.add_argument("--token", required=True, help="LiveKit token for the BOT, not the guest")
+    parser.add_argument("--room")
+    parser.add_argument("--hotel-id")
+    parser.add_argument("--token", help="LiveKit token for the BOT, not the guest")
+    parser.add_argument(
+        "--warm",
+        action="store_true",
+        help="preload models, print READY, then take the room assignment on stdin",
+    )
     args = parser.parse_args()
 
+    parts = None
+    if args.warm:
+        job, parts = warm_and_wait()
+        room, hotel_id, token = job["room"], job["hotel_id"], job["token"]
+    elif args.room and args.hotel_id and args.token:
+        room, hotel_id, token = args.room, args.hotel_id, args.token
+    else:
+        parser.error("--room, --hotel-id and --token are required unless --warm")
+
     try:
-        asyncio.run(run_bot(args.room, args.hotel_id, args.token))
+        asyncio.run(run_bot(room, hotel_id, token, parts))
     except KeyboardInterrupt:
         pass
     except Exception:
