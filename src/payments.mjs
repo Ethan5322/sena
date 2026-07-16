@@ -68,20 +68,18 @@ export async function applyChargeSuccess(db, event) {
 
   if (!claimed.length) return { ok: true, outcome: 'already_processed', reference };
 
-  // The hold can lapse while the guest is on the payment page. The money is
-  // real and we do not refuse it — but the room may have been resold in the
-  // meantime, so `expired` is confirmable here and the owner is told.
-  const { rows: confirmed } = await db.query(
-    `update sena_bookings
-        set status = 'confirmed', hold_expires_at = null
-      where id = $1 and status in ('pending', 'expired')
-      returning reference`,
-    [row.booking_id]
-  );
+  // The hold can lapse while the guest is on the payment page — or overnight.
+  // The money is real and we never refuse it, but the room may have been
+  // RESOLD in the meantime. sena_confirm_paid_booking() re-checks availability
+  // under the same lock the hold took: a late payment only confirms if the
+  // room is truly still free; otherwise the outcome is paid_room_gone and a
+  // human decides between refund and re-accommodation (the webhook alerts
+  // them). Blindly confirming here is how one room gets two guests.
+  const { rows: gate } = await db.query(`select * from sena_confirm_paid_booking($1)`, [
+    row.booking_id,
+  ]);
 
-  if (!confirmed.length) return { ok: true, outcome: 'paid_but_not_confirmable', reference };
-
-  return { ok: true, outcome: 'confirmed', reference: confirmed[0].reference };
+  return { ok: true, outcome: gate[0].outcome, reference: gate[0].reference || reference };
 }
 
 /**
@@ -198,6 +196,58 @@ export async function issueConfirmationPackage(db, notifier, bookingReference, p
     guest_id_number: guestId.guest_id_number,
     delivered: guestSend.ok,
   };
+}
+
+/**
+ * The alarm bell: money arrived but the booking could NOT be confirmed —
+ * the room was resold while the payment link sat unpaid, or the booking was
+ * cancelled after the link went out. Sena never decides refunds (§3); this
+ * hands the owner everything they need to, loudly, on both channels.
+ */
+export async function notifyPaymentProblem(db, notifier, bookingReference, outcome) {
+  try {
+    const { rows } = await db.query(
+      `select b.id as booking_id, b.reference, b.check_in, b.check_out, b.total_cents,
+              g.full_name, g.email, g.phone,
+              r.name as room_name,
+              h.name as hotel_name, h.email as hotel_email, h.escalation_whatsapp, h.currency
+         from sena_bookings b
+         join sena_rooms  r on r.id = b.room_id
+         join sena_hotels h on h.id = b.hotel_id
+    left join sena_guests g on g.id = b.guest_id
+        where b.reference = $1`,
+      [bookingReference]
+    );
+    if (!rows.length) return;
+    const b = rows[0];
+    const amount = `${b.currency} ${(Number(b.total_cents) / 100).toFixed(2)}`;
+    const why =
+      outcome === 'paid_room_gone'
+        ? `The room was RESOLD while the payment link sat unpaid — the hold had lapsed.`
+        : `The booking was CANCELLED before this payment arrived.`;
+
+    const sent = await notifier.alertOwner({
+      to: b.hotel_email,
+      whatsappTo: b.escalation_whatsapp,
+      subject: `⚠ Paid but NOT confirmed — ${amount} (${b.reference})`,
+      text:
+        `PAYMENT RECEIVED, BOOKING NOT CONFIRMED\n\n` +
+        `${b.full_name || 'guest'} · ${b.phone || ''} · ${b.email || 'no email'}\n` +
+        `${b.room_name} · ${b.check_in} → ${b.check_out}\n` +
+        `${amount} · ${b.reference}\n\n` +
+        `${why}\n\n` +
+        `THE DECISION IS YOURS: refund, or offer another room/dates and confirm ` +
+        `manually. The guest has NOT been told they are confirmed.`,
+    });
+
+    await db.query(
+      `insert into sena_notifications_log (booking_id, channel, recipient, template, status)
+            values ($1, $2, $3, 'owner_payment_problem', $4)`,
+      [b.booking_id, notifier.channel, b.hotel_email || 'unknown', sent.ok ? 'sent' : 'failed']
+    );
+  } catch (err) {
+    console.error('[sena] payment-problem alert failed:', err);
+  }
 }
 
 /**

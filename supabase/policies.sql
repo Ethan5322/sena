@@ -181,3 +181,4 @@ revoke all on function sena_expire_stale_holds()                          from p
 -- /api/sena/checkin, never to the database. The photo purge is the cron's job.
 revoke all on function sena_self_check_in(text, text, text)               from public, anon;
 revoke all on function sena_expire_ended_guest_ids()                      from public, anon;
+revoke all on function sena_confirm_paid_booking(uuid)                    from public, anon;

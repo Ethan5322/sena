@@ -376,6 +376,71 @@ as $$
   select coalesce(count(*), 0)::int from expired;
 $$;
 
+-- ── sena_confirm_paid_booking: the late-payment gate ─────────────────────────
+-- A payment link outlives its hold: the guest can pay HOURS after the 20-minute
+-- hold lapsed, and by then the room may have been resold — availability stops
+-- counting a lapsed hold the moment it expires. Blindly confirming a late
+-- payment is how one room gets two guests.
+--
+-- So confirmation re-decides under the same lock the hold took:
+--   * hold still live            → confirm, no recount needed (this booking is
+--                                  still the one occupying the room)
+--   * hold lapsed / expired      → lock the room, recount EXCLUDING this
+--                                  booking; confirm only if a unit is truly
+--                                  free, else report paid_room_gone — the
+--                                  money is real, the room is not, and a HUMAN
+--                                  decides between refund and re-accommodation
+--   * cancelled / already done   → say so, change nothing
+create or replace function sena_confirm_paid_booking(p_booking_id uuid)
+returns table (outcome text, reference text)
+language plpgsql
+as $$
+declare
+  v_b     sena_bookings%rowtype;
+  v_room  sena_rooms%rowtype;
+  v_taken int;
+begin
+  select b.* into v_b from sena_bookings b where b.id = p_booking_id for update;
+  if not found then
+    return query select 'unknown_booking'::text, null::text;
+    return;
+  end if;
+
+  if v_b.status in ('confirmed', 'checked_in', 'completed') then
+    return query select 'already_confirmed'::text, v_b.reference;
+    return;
+  end if;
+
+  if v_b.status = 'cancelled' then
+    return query select 'paid_but_cancelled'::text, v_b.reference;
+    return;
+  end if;
+
+  -- Hold still live: the room is still being counted as this booking's.
+  if v_b.status = 'pending' and v_b.hold_expires_at is not null and v_b.hold_expires_at > now() then
+    update sena_bookings set status = 'confirmed', hold_expires_at = null, updated_at = now()
+     where id = v_b.id;
+    return query select 'confirmed'::text, v_b.reference;
+    return;
+  end if;
+
+  -- The hold lapsed. Serialise against every concurrent hold_room() on this
+  -- room type, then recount — a lapsed/expired booking is not counted by
+  -- sena_rooms_taken, so the count is everyone EXCEPT us.
+  select r.* into v_room from sena_rooms r where r.id = v_b.room_id for update;
+  v_taken := sena_rooms_taken(v_b.room_id, v_b.check_in, v_b.check_out);
+
+  if v_room.inventory - v_taken <= 0 then
+    return query select 'paid_room_gone'::text, v_b.reference;
+    return;
+  end if;
+
+  update sena_bookings set status = 'confirmed', hold_expires_at = null, updated_at = now()
+   where id = v_b.id;
+  return query select 'confirmed'::text, v_b.reference;
+end;
+$$;
+
 -- ── sena_knock_out_guest_id: single-use check-in (§7 ID lifecycle rule) ──────────
 -- The whole point of the QR is that it dies on first scan. This is deliberately
 -- one atomic statement: two staff scanning the same code simultaneously must

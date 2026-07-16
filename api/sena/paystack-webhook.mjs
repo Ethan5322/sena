@@ -18,6 +18,7 @@ import { getServices } from '../../src/services.mjs';
 import {
   applyChargeSuccess,
   notifyPaymentLanded,
+  notifyPaymentProblem,
   issueConfirmationPackage,
 } from '../../src/payments.mjs';
 
@@ -68,7 +69,11 @@ export default async function handler(req, res) {
 
   try {
     const result = await applyChargeSuccess(database(), event);
-    if (result.outcome !== 'confirmed') {
+    if (result.outcome === 'paid_room_gone' || result.outcome === 'paid_but_cancelled') {
+      // Real money, no room. A human decides — loudly, on both channels.
+      console.error(`[sena] paystack ${result.outcome} on ${result.reference}`, result);
+      await notifyPaymentProblem(database(), getServices().notifier, result.reference, result.outcome);
+    } else if (result.outcome !== 'confirmed') {
       console.error(`[sena] paystack ${result.outcome} on ${result.reference}`, result);
     } else {
       // §8: the owner hears about money the moment it lands — WhatsApp +

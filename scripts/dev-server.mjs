@@ -29,6 +29,7 @@ import { createDemoServices } from '../src/demo.mjs';
 import {
   applyChargeSuccess,
   notifyPaymentLanded,
+  notifyPaymentProblem,
   issueConfirmationPackage,
 } from '../src/payments.mjs';
 
@@ -177,6 +178,8 @@ const server = http.createServer(async (req, res) => {
         result.reference,
         process.env.SENA_PUBLIC_URL || ''
       );
+    } else if (result.outcome === 'paid_room_gone' || result.outcome === 'paid_but_cancelled') {
+      await notifyPaymentProblem(demo.db, demo.notifier, result.reference, result.outcome);
     }
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     return res.status(200).send(

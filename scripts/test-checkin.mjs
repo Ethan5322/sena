@@ -21,7 +21,7 @@ import { fileURLToPath } from 'node:url';
 import { PGlite } from '@electric-sql/pglite';
 import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto';
 import { createRouter } from '../src/router.mjs';
-import { applyChargeSuccess, notifyPaymentLanded } from '../src/payments.mjs';
+import { applyChargeSuccess, notifyPaymentLanded, notifyPaymentProblem } from '../src/payments.mjs';
 import { createWhatsApp } from '../src/adapters/whatsapp.mjs';
 import { useServices } from '../src/services.mjs';
 import checkinHandler from '../api/sena/checkin.mjs';
@@ -270,6 +270,76 @@ ok(cxlGone[0].status === 'expired', "a cancelled booking's code is expired by th
 // ── The card after the stay: an honest notice, never a live-looking pass ─────
 const cardAfter = await hitCard(today.code);
 ok(cardAfter.code === 410 && String(cardAfter.body).includes('No longer valid'), 'after the stay the card page says so, instead of impersonating a valid pass');
+
+// ── The late payment and the resold room ─────────────────────────────────────
+// A payment link outlives its 20-minute hold. If the guest pays overnight and
+// the room was resold in between, confirming anyway double-books the room.
+console.log('\n  ── the overbooking gate ──');
+
+const { rows: [suite] } = await db.query(
+  `select id, inventory, rate_cents from sena_rooms where name = 'Executive Suite'`
+);
+
+const { rows: [hotelRow] } = await db.query(`select id from sena_hotels where is_demo`);
+
+async function lapsedPaidAttempt(tag, from, to) {
+  const { rows: [held] } = await db.query(
+    `select * from sena_hold_room($1, $2, $3::date, $4::date, 2)`,
+    [hotelRow.id, suite.id, from, to]
+  );
+  await db.query(
+    `insert into sena_payments (booking_id, provider_reference, amount_cents, currency)
+          values ($1, $2, $3, 'ZAR')`,
+    [held.booking_id, tag, held.total_cents]
+  );
+  // The guest walks away; the hold lapses overnight.
+  await db.query(`update sena_bookings set hold_expires_at = now() - interval '1 hour' where id = $1`, [
+    held.booking_id,
+  ]);
+  return held;
+}
+
+// Room resold while the link sat unpaid: fill the suite's whole inventory.
+const oversold = await lapsedPaidAttempt('OVB-GONE', day(30), day(32));
+for (let i = 0; i < suite.inventory; i++) {
+  await db.query(`select * from sena_hold_room($1, $2, $3::date, $4::date, 2)`, [
+    hotelRow.id, suite.id, day(30), day(32),
+  ]);
+  await db.query(
+    `update sena_bookings set status = 'confirmed', hold_expires_at = null
+      where room_id = $1 and status = 'pending' and check_in = $2::date
+        and id <> $3`,
+    [suite.id, day(30), oversold.booking_id]
+  );
+}
+
+const late = await applyChargeSuccess(db, {
+  event: 'charge.success',
+  data: { reference: 'OVB-GONE', amount: Number(oversold.total_cents) },
+});
+ok(late.outcome === 'paid_room_gone', `late payment on a RESOLD room is NOT confirmed — "${late.outcome}"`);
+
+const { rows: [ovbB] } = await db.query(`select status from sena_bookings where id = $1`, [oversold.booking_id]);
+ok(ovbB.status !== 'confirmed', 'the booking stays unconfirmed — one room never gets two guests');
+const { rows: [ovbP] } = await db.query(
+  `select status from sena_payments where provider_reference = 'OVB-GONE'`
+);
+ok(ovbP.status === 'paid', 'but the money is recorded as received — the refund decision has its paper trail');
+
+await notifyPaymentProblem(db, notifier, oversold.reference, 'paid_room_gone');
+const { rows: alarm } = await db.query(
+  `select 1 from sena_notifications_log where booking_id = $1 and template = 'owner_payment_problem' and status = 'sent'`,
+  [oversold.booking_id]
+);
+ok(alarm.length === 1, 'and the owner is alarmed on both channels — a human decides, not the webhook');
+
+// Same lapse, but the room is still free: the late payment confirms normally.
+const fine = await lapsedPaidAttempt('OVB-FINE', day(40), day(42));
+const lateFine = await applyChargeSuccess(db, {
+  event: 'charge.success',
+  data: { reference: 'OVB-FINE', amount: Number(fine.total_cents) },
+});
+ok(lateFine.outcome === 'confirmed', 'a late payment on a room still free confirms as before');
 
 console.log(
   failures === 0
