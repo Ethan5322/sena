@@ -17,3 +17,6 @@ __pycache__/
 
 # demo mode writes every email it "sends" here
 .sena-demo-mail/
+
+# portable helper binaries (cloudflared) — downloaded, never committed
+tools/

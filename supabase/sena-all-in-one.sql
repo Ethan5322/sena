@@ -119,6 +119,15 @@ create table if not exists sena_hotels (
   created_at          timestamptz not null default now()
 );
 
+-- Where this hotel's LIVE voice line is, right now. The voice stack runs on a
+-- box (or a laptop behind a tunnel) whose public URL can change on every
+-- restart — so the box REGISTERS itself here (POST /api/sena/voice, signed
+-- with the shared secret) and heartbeats every few minutes. The public "Call
+-- Sena" button redirects to a fresh registration and shows an honest holding
+-- page when the heartbeat has gone quiet. No poster is ever reprinted.
+alter table sena_hotels add column if not exists voice_url            text;
+alter table sena_hotels add column if not exists voice_url_updated_at timestamptz;
+
 -- ── sena_rooms ───────────────────────────────────────────────────────────────────
 -- A room TYPE with an inventory count, not a single physical room. A hotel has
 -- "6 Standard Doubles", and availability is inventory minus overlapping

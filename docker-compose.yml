@@ -54,7 +54,10 @@ services:
       # the BROWSER (via /connect) is told the host-published one, because the
       # guest's laptop cannot resolve "livekit". Collapse them and one party
       # always dials a number that does not exist for it.
-      LIVEKIT_URL: ws://livekit:7880
+      # Overridable so the same compose runs against LiveKit CLOUD (set
+      # LIVEKIT_URL=wss://your-project.livekit.cloud in .env.local and the bot
+      # dials out to it; the local livekit container just idles).
+      LIVEKIT_URL: ${LIVEKIT_URL:-ws://livekit:7880}
       LIVEKIT_PUBLIC_URL: ${LIVEKIT_PUBLIC_URL:-ws://localhost:7880}
       LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-devkey}
       LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-secret-at-least-32-characters-long}

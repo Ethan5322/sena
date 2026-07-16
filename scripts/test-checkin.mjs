@@ -26,6 +26,7 @@ import { createWhatsApp } from '../src/adapters/whatsapp.mjs';
 import { useServices } from '../src/services.mjs';
 import checkinHandler from '../api/sena/checkin.mjs';
 import cardHandler from '../api/sena/card.mjs';
+import voiceHandler from '../api/sena/voice.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -270,6 +271,49 @@ ok(cxlGone[0].status === 'expired', "a cancelled booking's code is expired by th
 // ── The card after the stay: an honest notice, never a live-looking pass ─────
 const cardAfter = await hitCard(today.code);
 ok(cardAfter.code === 410 && String(cardAfter.body).includes('No longer valid'), 'after the stay the card page says so, instead of impersonating a valid pass');
+
+// ── The voice door: the box announces itself, the button follows ─────────────
+console.log('\n  ── the voice door ──');
+process.env.SENA_WEBHOOK_SECRET = 'voice-test-secret';
+delete process.env.SENA_VOICE_URL;
+
+async function hitVoice(method, { body, secret } = {}) {
+  const res = {
+    code: 200, headers: {}, body: null, ended: false,
+    setHeader(k, v) { this.headers[k] = v; },
+    status(c) { this.code = c; return this; },
+    json(o) { this.body = o; return this; },
+    send(b) { this.body = b; return this; },
+    end() { this.ended = true; return this; },
+  };
+  await voiceHandler({ method, body, headers: { 'x-sena-secret': secret } }, res);
+  return res;
+}
+
+const badReg = await hitVoice('POST', { body: { url: 'https://x.trycloudflare.com' }, secret: 'wrong' });
+ok(badReg.code === 401, 'registering a voice line without the secret → 401');
+
+const reg = await hitVoice('POST', {
+  body: { url: 'https://demo-line.trycloudflare.com' },
+  secret: 'voice-test-secret',
+});
+ok(reg.code === 200 && reg.body.registered, 'the box registers its public URL');
+
+const follow = await hitVoice('GET');
+ok(
+  // Vercel-style handlers set res.statusCode directly for redirects.
+  follow.statusCode === 302 && follow.headers.Location === 'https://demo-line.trycloudflare.com/?call=1',
+  '"Call Sena" follows the fresh registration — with ?call=1, so the call starts itself'
+);
+
+// The heartbeat goes quiet: an old registration must NOT be followed.
+await db.query(`update sena_hotels set voice_url_updated_at = now() - interval '1 hour' where is_demo`);
+const stale = await hitVoice('GET');
+ok(stale.code === 200 && String(stale.body).includes('voice line is closed'), 'a stale heartbeat gets the honest holding page, never a dead redirect');
+
+const bye = await hitVoice('POST', { body: { url: '' }, secret: 'voice-test-secret' });
+const afterBye = await hitVoice('GET');
+ok(bye.code === 200 && afterBye.code === 200 && String(afterBye.body).includes('Check in with my code'), 'a clean sign-off flips to the holding page, which still routes the guest');
 
 // ── The late payment and the resold room ─────────────────────────────────────
 // A payment link outlives its 20-minute hold. If the guest pays overnight and
