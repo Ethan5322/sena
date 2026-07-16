@@ -73,9 +73,13 @@ export default async function handler(req, res) {
       // Real money, no room. A human decides — loudly, on both channels.
       console.error(`[sena] paystack ${result.outcome} on ${result.reference}`, result);
       await notifyPaymentProblem(database(), getServices().notifier, result.reference, result.outcome);
-    } else if (result.outcome !== 'confirmed') {
+    } else if (result.outcome !== 'confirmed' && result.outcome !== 'already_confirmed') {
       console.error(`[sena] paystack ${result.outcome} on ${result.reference}`, result);
     } else {
+      // 'already_confirmed' is not a duplicate here: it is ALSO the guest who
+      // checked in with a PAYMENT PENDING pass and then paid the link — the
+      // owner must hear that money arrived, and the confirmation package (if
+      // never sent) must still go. Both are ledger-deduplicated.
       // §8: the owner hears about money the moment it lands — WhatsApp +
       // email. 'confirmed' fires exactly once per booking, so this does too.
       await notifyPaymentLanded(database(), getServices().notifier, result.reference);

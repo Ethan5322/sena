@@ -53,7 +53,9 @@ export default async function handler(req, res) {
         to_jsonb(g.*)  as guest,
         to_jsonb(r.*)  as room,
         to_jsonb(h.*)  as hotel,
-        ((now() at time zone h.timezone)::date <= b.check_out) as stay_ongoing
+        ((now() at time zone h.timezone)::date <= b.check_out) as stay_ongoing,
+        exists (select 1 from sena_payments p
+                 where p.booking_id = b.id and p.status = 'paid') as paid
        from sena_guest_ids gi
        join sena_bookings  b on b.id = gi.booking_id
        join sena_rooms     r on r.id = b.room_id
@@ -67,7 +69,7 @@ export default async function handler(req, res) {
     return res.status(404).send(notice('Not found', 'This guest ID does not exist.'));
   }
 
-  const { guest_id: guestId, booking, guest, room, hotel, stay_ongoing } = rows[0];
+  const { guest_id: guestId, booking, guest, room, hotel, stay_ongoing, paid } = rows[0];
 
   // Which face of the card is this? (§7 lifecycle)
   //   active                          → the arrival QR pass
@@ -92,7 +94,11 @@ export default async function handler(req, res) {
   }
 
   try {
-    const html = await buildCardHtml({ hotel, booking, guest, guestId, room, mode, chrome: true });
+    const html = await buildCardHtml({
+      hotel, booking, guest, guestId, room, mode,
+      chrome: true,
+      paymentPending: !paid,
+    });
     return res.status(200).send(html);
   } catch (err) {
     console.error('[sena] card render failed:', err);

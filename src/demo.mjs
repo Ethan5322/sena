@@ -95,7 +95,11 @@ export async function createDemoServices({ publicUrl = 'http://localhost:3000' }
     channel: 'email',
     async sendPaymentLink({ to, url, pkg }) {
       return write('payment-link', to, `Pay to confirm — ${pkg.booking.reference}`,
-        `<p>Pay here: <a href="${url}">${url}</a></p>`);
+        `<p>Pay here: <a href="${url}">${url}</a></p>` +
+        (pkg.guest_id
+          ? `<p>CHECK-IN CODE (type this on arrival, not the reference): ` +
+            `<strong style="font-family:monospace">${pkg.guest_id.verification_number}</strong></p>`
+          : ''));
     },
     async sendConfirmation({ to, pkg }) {
       return write('confirmation', to, `Confirmed — ${pkg.booking.reference}`,

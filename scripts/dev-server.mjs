@@ -168,7 +168,7 @@ const server = http.createServer(async (req, res) => {
     });
 
     console.log(`  [demo paystack] PAID ${ref} → ${JSON.stringify(result)}`);
-    if (result.outcome === 'confirmed') {
+    if (result.outcome === 'confirmed' || result.outcome === 'already_confirmed') {
       // Same owner ping + automatic guest confirmation the production webhook
       // sends, through the demo notifier.
       await notifyPaymentLanded(demo.db, demo.notifier, result.reference);

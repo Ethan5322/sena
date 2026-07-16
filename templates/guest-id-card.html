@@ -167,6 +167,16 @@
   }
   .single b { color: {{brand_accent}}; opacity: 1; }
 
+  /* Money not yet landed. Amber, full-width, impossible to miss at the desk —
+     the owner's rule is that an unpaid guest still checks in, and THIS is what
+     keeps that honest. Hidden the moment the payment clears. */
+  .paystrip {
+    margin-top: 18px; padding: 12px 20px; border-radius: 12px;
+    background: #B45309; color: #FFF7ED;
+    font-family: 'Sora'; font-weight: 700; font-size: 20px; letter-spacing: 2.5px;
+    text-transform: uppercase; text-align: center;
+  }
+
   /* The MuleSoo mark. Compact lockup — see the header comment on why this is not
      the QR stamp. Given its own full-width strip under a hairline: the agency
      credit on every deliverable is only worth having if it can be read. */
@@ -240,11 +250,13 @@
       <div class="footrow">
         <div class="barcode">
           <img src="{{barcode_data_uri}}" alt="" />
-          <div class="cap">Verification {{verification_number}}</div>
+          <div class="cap">Check-in code {{verification_number}}</div>
         </div>
 
         <div class="single">{{lifecycle_html}}</div>
       </div>
+
+      <div class="paystrip" {{show_paystrip}}>Payment pending — please settle at the front desk</div>
 
       <div class="credit">
         <img src="{{credit_data_uri}}" alt="Designed &amp; built by MuleSoo Digital Services" />

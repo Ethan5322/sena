@@ -57,6 +57,8 @@ async function lookup(code) {
     `select gi.status as id_status, gi.used_at, gi.photo_taken_at,
             b.id as booking_id, b.reference, b.check_in, b.check_out,
             b.status as booking_status, b.guests_count,
+            exists (select 1 from sena_payments p
+                     where p.booking_id = b.id and p.status = 'paid') as paid,
             g.full_name, g.nationality,
             r.name as room_name, r.plan,
             h.id as hotel_id, h.name as hotel_name, h.email as hotel_email,
@@ -74,16 +76,23 @@ async function lookup(code) {
 }
 
 /** What the guest should see for this booking, right now. UX only — the
- *  database re-decides all of it inside sena_self_check_in(). */
+ *  database re-decides all of it inside sena_self_check_in(). An UNPAID
+ *  booking is still 'ready': the pass will say PAYMENT PENDING (§ the owner's
+ *  rule — the desk collects; the door does not turn a guest away over money). */
 function stateOf(row) {
   if (row.booking_status === 'cancelled') return 'cancelled';
   if (row.id_status === 'used') return 'already_checked_in';
   if (row.id_status === 'expired' || row.booking_status === 'completed') return 'expired';
-  if (row.booking_status !== 'confirmed') return 'see_front_desk';
+  if (row.booking_status === 'checked_in') return 'already_checked_in';
   if (row.hotel_today < row.check_in) return 'too_early';
   if (row.hotel_today > row.check_out) return 'expired';
   return 'ready';
 }
+
+// The one wrong code guests actually type: the BOOKING REFERENCE (JA-XXXXX),
+// which sits at the top of every email. Recognise the shape and say exactly
+// where the real code lives, instead of a blank "not correct".
+const LOOKS_LIKE_REFERENCE = /^[A-Z]{2}-?[A-Z0-9]{4,6}$/;
 
 // Best-effort per-IP throttle. The codes are 59-bit so guessing is hopeless —
 // what this blunts is a bot burning database connections and email quota. It is
@@ -126,7 +135,13 @@ export default async function handler(req, res) {
   const code = String(body.code || '').trim().toUpperCase();
 
   if (!CODE_RE.test(code)) {
-    return res.status(400).json({ ok: false, reason: 'That does not look like a check-in code.' });
+    return res.status(400).json({
+      ok: false,
+      reason: LOOKS_LIKE_REFERENCE.test(code)
+        ? 'That is your booking reference, not your check-in code. The check-in code is the ' +
+          '12-character code in the grey box of your email — no dash in it.'
+        : 'That does not look like a check-in code. It is the 12-character code in the grey box of your email.',
+    });
   }
 
   try {
@@ -138,6 +153,7 @@ export default async function handler(req, res) {
       return res.status(200).json({
         ok: true,
         state: stateOf(row),
+        payment_pending: !row.paid,
         guest_name: row.full_name || 'Guest',
         hotel_name: row.hotel_name,
         room: row.plan ? `${row.room_name} · ${row.plan}` : row.room_name,
@@ -166,19 +182,26 @@ export default async function handler(req, res) {
 
       // §2 stage 11 — owner visibility: real-time check-in confirmation. The
       // guest is not kept waiting on the owner's inbox: failures are logged,
-      // not surfaced.
+      // not surfaced. An UNPAID check-in leads with the money, loudly — the
+      // desk has one job before handing over a key.
       try {
         const row = await lookup(code);
         const { notifier } = getServices();
+        const pending = result.payment_pending === true;
         const sent = await notifier.alertOwner({
           to: row.hotel_email,
           whatsappTo: row.escalation_whatsapp,
-          subject: `Checked in — ${result.guest_name} (${result.booking_reference})`,
+          subject: pending
+            ? `⚠ Checked in, PAYMENT PENDING — ${result.guest_name} (${result.booking_reference})`
+            : `Checked in — ${result.guest_name} (${result.booking_reference})`,
           text:
+            (pending ? `⚠ PAYMENT PENDING — COLLECT AT THE DESK\n\n` : '') +
             `GUEST CHECKED IN (self-service)\n\n` +
             `${result.guest_name}\n${result.booking_reference} · ${row.room_name}\n` +
-            `Staying until ${row.check_out}\n\n` +
-            `Photo ID issued; it expires automatically at check-out.`,
+            `Staying until ${isoDay(row.check_out)}\n\n` +
+            (pending
+              ? `Their pass is stamped PAYMENT PENDING. The photo ID expires at check-out.`
+              : `Photo ID issued; it expires automatically at check-out.`),
         });
         await database().query(
           `insert into sena_notifications_log (booking_id, channel, recipient, template, status)
@@ -194,6 +217,7 @@ export default async function handler(req, res) {
         ok: true,
         guest_name: result.guest_name,
         reference: result.booking_reference,
+        payment_pending: result.payment_pending === true,
         valid_until: isoDay(result.check_out),
         card_url: publicUrl ? `${publicUrl}/api/sena/card?v=${encodeURIComponent(code)}` : null,
       });
@@ -277,10 +301,11 @@ const PAGE = `<!doctype html>
   <!-- Step 1 · the code -->
   <section id="s-code">
     <h1>Check in</h1>
-    <p class="sub">Enter the check-in code from your confirmation email.</p>
+    <p class="sub">Enter your <strong>check-in code</strong> — the 12-character code
+       in the grey box of your email. Not the booking reference (JA-…).</p>
     <div class="card">
       <input id="code" class="code" maxlength="20" autocomplete="one-time-code"
-             autocapitalize="characters" spellcheck="false" placeholder="XXXX XXXX XXXX">
+             autocapitalize="characters" spellcheck="false" placeholder="12-CHARACTER CODE">
       <button id="find">Find my booking</button>
     </div>
     <p class="status" id="st1">&nbsp;</p>
@@ -371,6 +396,11 @@ const PAGE = `<!doctype html>
       { weekday: 'short', day: 'numeric', month: 'short' });
   }
 
+  // The phone REMEMBERS the code once it has looked up a real booking, so an
+  // arriving guest opens this page and their code is already waiting — until
+  // it is spent or expires, when it is forgotten.
+  try { var saved = localStorage.getItem('sena_checkin_code'); if (saved) $('code').value = saved; } catch (e) {}
+
   // ── Step 1 → 2 ─────────────────────────────────────────────────────────────
   $('find').onclick = function () {
     CODE = $('code').value.replace(/\\s/g, '').toUpperCase();
@@ -380,9 +410,13 @@ const PAGE = `<!doctype html>
     post({ action: 'lookup', code: CODE }).then(function (b) {
       $('find').disabled = false;
       if (!b.ok) return say($('st1'), b.reason === 'unknown code'
-        ? 'We could not find that code. Check your confirmation email and try again.'
+        ? 'We could not find that code. It is the 12-character code in the grey box of your email — not the JA-… booking reference.'
         : (b.reason || 'Something went wrong.'), true);
       LOOKUP = b;
+      try {
+        if (b.state === 'ready' || b.state === 'too_early') localStorage.setItem('sena_checkin_code', CODE);
+        else localStorage.removeItem('sena_checkin_code');
+      } catch (e) {}
       renderDetails(b);
       say($('st1'), '');
       show('s-details');
@@ -407,7 +441,10 @@ const PAGE = `<!doctype html>
     photoBtn.classList.add('hide'); cardBtn.classList.add('hide');
 
     if (b.state === 'ready') {
-      v.innerHTML = '<div class="note ok">Everything is in order. One quick photo and your guest ID is issued.</div>';
+      v.innerHTML = b.payment_pending
+        ? '<div class="note warn"><strong>Payment is still pending.</strong> You can check in now — ' +
+          'your guest ID will say so, and you can settle at the front desk.</div>'
+        : '<div class="note ok">Everything is in order. One quick photo and your guest ID is issued.</div>';
       photoBtn.classList.remove('hide');
     } else if (b.state === 'already_checked_in') {
       v.innerHTML = '<div class="note ok">You are already checked in. Your guest ID is ready.</div>';
@@ -521,8 +558,10 @@ const PAGE = `<!doctype html>
     post({ action: 'checkin', code: CODE, photo: PHOTO }).then(function (b) {
       $('usephoto').disabled = false;
       if (!b.ok) return say($('st3'), b.reason || 'Could not check you in — please see the front desk.', true);
+      try { localStorage.removeItem('sena_checkin_code'); } catch (e) {} // spent — forget it
       $('donename').textContent = "You're checked in, " + (b.guest_name.split(' ')[0] || 'Guest');
-      $('donesub').textContent = 'Your photo ID is issued and stays valid until ' + day(b.valid_until) + '.';
+      $('donesub').textContent = 'Your photo ID is issued and stays valid until ' + day(b.valid_until) + '.' +
+        (b.payment_pending ? ' Payment is still pending — please settle at the front desk.' : '');
       if (b.card_url) $('donecard').href = b.card_url; else $('donecard').classList.add('hide');
       show('s-done');
     }).catch(function () {

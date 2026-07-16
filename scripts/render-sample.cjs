@@ -121,10 +121,11 @@ const JSBARCODE = fs.readFileSync(
     scan_label: 'Scan at reception',
     show_qr: '',
     show_photo: 'hidden',
+    show_paystrip: 'hidden',            // the sample shows a PAID stay
     photo_data_uri: '',
     lifecycle_html:
-      'Valid for <b>one check-in only</b>. This ID is cancelled the moment it is ' +
-      'scanned and cannot be reused or shared.',
+      'Valid for <b>one check-in only, within 48 hours of your check-in time</b>. ' +
+      'Cancelled the moment it is used; it cannot be reused or shared.',
   });
 
   const left = html.match(/{{\s*[\w_]+\s*}}/g);

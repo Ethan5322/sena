@@ -175,12 +175,17 @@ export function createNotifier({ host, port, user, pass, from, resendApiKey = nu
           `PAY SECURELY (Paystack):\n${url}\n\n` +
           `Your room is held for ${pkg.hotel.hold_minutes} minutes. If payment is not ` +
           `completed in that time, the room is released for other guests.\n\n` +
+          (pkg.guest_id
+            ? `YOUR CHECK-IN CODE: ${pkg.guest_id.verification_number}\n` +
+              `This is the code you will type on our reception page when you arrive — ` +
+              `NOT the booking reference above. Keep this email.\n\n`
+            : '') +
           `WHAT HAPPENS NEXT\n` +
-          `The moment your payment is received, your booking is confirmed and we ` +
-          `email your personal CHECK-IN CODE and digital guest ID. The code stays ` +
-          `valid until you check in — at the front desk or on our reception page — ` +
-          `or until your stay ends. Payment is processed entirely by Paystack; ` +
-          `we never see or store your card details.\n\n` +
+          `Once payment is received your booking is confirmed and your digital ` +
+          `guest ID follows by email. If you arrive before payment completes, you ` +
+          `can still check in with the code above — your ID will show "payment ` +
+          `pending" and you can settle at the front desk. Payment is processed ` +
+          `entirely by Paystack; we never see or store your card details.\n\n` +
           `We look forward to welcoming you.\n${pkg.hotel.name}` +
           (pkg.hotel.address ? `\n${pkg.hotel.address}` : ''),
         html: wrap(
@@ -202,12 +207,24 @@ export function createNotifier({ host, port, user, pass, from, resendApiKey = nu
            <p style="background:#FEF3C7;padding:.8rem 1rem;border-radius:8px;color:#92400E;font-size:.9rem">
              <strong>Your room is held for ${esc(pkg.hotel.hold_minutes)} minutes.</strong>
              If payment is not completed in that time, the room is released for other guests.</p>
+           ${
+             pkg.guest_id
+               ? `<p style="margin:1.4rem 0 .3rem;font-size:.8rem;letter-spacing:.08em;
+                            text-transform:uppercase;color:#6B7280">Your check-in code</p>
+                  <p style="margin:0;padding:.9rem 1rem;background:#F3F4F6;border-radius:10px;
+                            text-align:center;font:700 1.4rem/1.2 ui-monospace,Consolas,monospace;
+                            letter-spacing:.25em">${esc(pkg.guest_id.verification_number)}</p>
+                  <p style="font-size:.82rem;color:#6B7280;margin-top:.5rem">
+                    This is the code you will type on our reception page when you arrive —
+                    <strong>not</strong> the booking reference above. Keep this email.</p>`
+               : ''
+           }
            <p style="margin:1.4rem 0 .3rem;font-size:.8rem;letter-spacing:.08em;
                      text-transform:uppercase;color:#6B7280">What happens next</p>
-           <p style="font-size:.9rem">The moment your payment is received, your booking is
-              confirmed and we email your personal <strong>check-in code</strong> and digital
-              guest ID. The code stays valid until you check in — at the front desk or on our
-              reception page — or until your stay ends.</p>
+           <p style="font-size:.9rem">Once payment is received your booking is confirmed and your
+              digital guest ID follows by email. Arriving before payment completes? You can still
+              check in with the code above — your ID will show <strong>payment pending</strong>
+              and you can settle at the front desk.</p>
            <p style="font-size:.8rem;color:#6B7280">Payment is processed securely by Paystack.
               ${esc(pkg.hotel.name)} never sees or stores your card details.</p>`
         ),

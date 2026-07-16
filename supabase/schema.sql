@@ -496,13 +496,16 @@ $$;
 
 -- ── sena_self_check_in: the guest checks themselves in (§2 stage 11) ─────────
 -- The guest arrives, opens the reception page, chooses "I have a booking",
--- types the verification code from their confirmation email, and takes a photo.
--- This is that moment, as one atomic decision:
+-- types the CHECK-IN CODE from their payment/confirmation email, and takes a
+-- photo. This is that moment, as one atomic decision:
 --
 --   * the code must exist and still be active (single use, same as the desk)
---   * the booking must be PAID — a code only exists after payment, but the
---     booking may have been cancelled since, and a cancelled stay must not
---     walk in
+--   * PAYMENT IS NOT A GATE. The code ships with the payment email, and a
+--     guest whose payment has not landed still checks in — their pass is
+--     stamped PAYMENT PENDING and the front desk collects. What IS a gate:
+--     a cancelled booking never walks in, and an UNPAID booking whose hold
+--     lapsed must win its room back (same recount as a late payment) — if the
+--     room was resold, the desk decides, not this function.
 --   * it must be arrival day or later, hotel-local time — a code is not a key
 --     to the building a week early
 --   * the stay must not already be over
@@ -513,18 +516,23 @@ $$;
 -- the same race rules apply: the row is locked, two devices cannot both win),
 -- the photo is attached, and the booking flips to checked_in. The card page
 -- then renders as the in-stay photo pass, valid until check-out.
-create or replace function sena_self_check_in(
+drop function if exists sena_self_check_in(text, text, text);
+create function sena_self_check_in(
   p_verification_number text,
   p_photo               text,
   p_device              text default 'guest-self-checkin'
-) returns table (ok boolean, reason text, booking_reference text, guest_name text, check_out date)
+) returns table (ok boolean, reason text, booking_reference text, guest_name text,
+                 check_out date, payment_pending boolean)
 language plpgsql
 as $$
 declare
   v_id      sena_guest_ids%rowtype;
   v_booking sena_bookings%rowtype;
   v_guest   sena_guests%rowtype;
+  v_room    sena_rooms%rowtype;
   v_today   date;
+  v_paid    boolean;
+  v_taken   int;
 begin
   -- Lock the credential row: the same code typed on two phones at the same
   -- second must produce one check-in and one honest refusal.
@@ -534,7 +542,7 @@ begin
      for update;
 
   if not found then
-    return query select false, 'unknown code', null::text, null::text, null::date;
+    return query select false, 'unknown code', null::text, null::text, null::date, null::boolean;
     return;
   end if;
 
@@ -543,7 +551,7 @@ begin
       case when v_id.status = 'used'
            then 'already checked in at ' || coalesce(v_id.used_at::text, 'unknown time')
            else 'this code has expired' end,
-      null::text, null::text, null::date;
+      null::text, null::text, null::date, null::boolean;
     return;
   end if;
 
@@ -555,34 +563,51 @@ begin
     from sena_hotels h where h.id = v_booking.hotel_id;
 
   if v_booking.status = 'cancelled' then
-    return query select false, 'this booking was cancelled', v_booking.reference, null::text, null::date;
+    return query select false, 'this booking was cancelled', v_booking.reference, null::text, null::date, null::boolean;
     return;
   end if;
 
-  -- A guest_id row only exists once money landed, so anything not confirmed
-  -- here is a lifecycle surprise — refuse and let a human look.
-  if v_booking.status <> 'confirmed' then
+  if v_booking.status in ('checked_in', 'completed') then
     return query select false, 'booking is ' || v_booking.status || ' — please see the front desk',
-                        v_booking.reference, null::text, null::date;
+                        v_booking.reference, null::text, null::date, null::boolean;
     return;
   end if;
 
   if v_today < v_booking.check_in then
     return query select false, 'too early — check-in opens on ' || v_booking.check_in::text,
-                        v_booking.reference, null::text, null::date;
+                        v_booking.reference, null::text, null::date, null::boolean;
     return;
   end if;
 
   if v_today > v_booking.check_out then
     return query select false, 'the stay dates for this booking have passed',
-                        v_booking.reference, null::text, null::date;
+                        v_booking.reference, null::text, null::date, null::boolean;
     return;
   end if;
 
   if p_photo is null or length(p_photo) < 100 then
     return query select false, 'a photo is required to issue the guest ID',
-                        v_booking.reference, null::text, null::date;
+                        v_booking.reference, null::text, null::date, null::boolean;
     return;
+  end if;
+
+  select exists (
+    select 1 from sena_payments p where p.booking_id = v_booking.id and p.status = 'paid'
+  ) into v_paid;
+
+  -- An unpaid booking whose hold lapsed stopped reserving its room, which may
+  -- have been resold since. Same rule as a late payment: win the room back
+  -- under the room lock, or hand the guest to a human. A booking whose hold is
+  -- still live (or already confirmed) is still the room's occupant — no recount.
+  if v_booking.status <> 'confirmed'
+     and (v_booking.hold_expires_at is null or v_booking.hold_expires_at <= now()) then
+    select r.* into v_room from sena_rooms r where r.id = v_booking.room_id for update;
+    v_taken := sena_rooms_taken(v_booking.room_id, v_booking.check_in, v_booking.check_out);
+    if v_room.inventory - v_taken <= 0 then
+      return query select false, 'this room is no longer available — please see the front desk',
+                          v_booking.reference, null::text, null::date, null::boolean;
+      return;
+    end if;
   end if;
 
   update sena_guest_ids
@@ -596,7 +621,7 @@ begin
   select g.* into v_guest from sena_guests g where g.id = v_booking.guest_id;
 
   return query select true, 'checked in', v_booking.reference,
-                      coalesce(v_guest.full_name, ''), v_booking.check_out;
+                      coalesce(v_guest.full_name, ''), v_booking.check_out, not v_paid;
 end;
 $$;
 
@@ -607,6 +632,16 @@ $$;
 --      deleted the day after check-out (or the moment a booking is cancelled),
 --      automatically, without anyone remembering to. Booking records stay, per
 --      the retention policy; the face does not.
+--
+-- An 'expired' BOOKING (a hold that was never paid) does NOT kill its code:
+-- the check-in code ships with the payment email, and an unpaid guest may
+-- still arrive on check-in day — their pass says PAYMENT PENDING and the desk
+-- collects. A code dies for exactly three reasons:
+--   * the stay dates passed,
+--   * the booking was cancelled,
+--   * NO-SHOW — the guest never checked in within 48 HOURS of their check-in
+--     time (hotel-local). A code that lingers past the no-show window is a
+--     door key floating around for a stay that never happened.
 create or replace function sena_expire_ended_guest_ids() returns int
 language sql
 as $$
@@ -618,7 +653,11 @@ as $$
      where b.id = gi.booking_id
        and (gi.status <> 'expired' or gi.photo is not null)
        and ( (now() at time zone h.timezone)::date > b.check_out
-          or b.status in ('cancelled', 'expired') )
+          or b.status = 'cancelled'
+          or ( gi.status = 'active'
+               and b.status not in ('checked_in', 'completed')
+               and (now() at time zone h.timezone)
+                   > (b.check_in + h.check_in_time + interval '48 hours') ) )
     returning 1
   )
   select coalesce(count(*), 0)::int from ended;

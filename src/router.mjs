@@ -337,10 +337,25 @@ export function createRouter({
       booking.room_id,
     ]);
 
+    // The guest's CHECK-IN CODE is minted here, with the payment link — not
+    // after payment. A guest whose payment never lands can still check in on
+    // arrival day; their pass says PAYMENT PENDING and the desk collects.
+    // Idempotent: one booking, one code, however many links are re-sent.
+    const { rows: minted } = await db.query(
+      `insert into sena_guest_ids (booking_id, guest_id_number, verification_number)
+            values ($1, $2, $3)
+       on conflict (booking_id) do nothing
+        returning *`,
+      [booking.id, `${booking.reference}-${code(4)}`, code(12)]
+    );
+    const guestId = minted.length
+      ? minted[0]
+      : (await db.query(`select * from sena_guest_ids where booking_id = $1`, [booking.id])).rows[0];
+
     const sent = await notifier.sendPaymentLink({
       to: guest.email,
       url: authorization_url,
-      pkg: { hotel: s.hotel, booking, guest, room: roomRows[0], total: toMajor(amount) },
+      pkg: { hotel: s.hotel, booking, guest, room: roomRows[0], guest_id: guestId, total: toMajor(amount) },
     });
 
     await db.query(

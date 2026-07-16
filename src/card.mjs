@@ -105,7 +105,19 @@ export function qrPayload({ guestId, booking, guest }) {
  * a CDN outage must not eat a guest's ID). Off for offline/PNG rendering so
  * the sample images and print pipeline stay clean.
  */
-export async function buildCardHtml({ hotel, booking, guest, guestId, room, mode = 'arrival', chrome = false }) {
+export async function buildCardHtml({
+  hotel,
+  booking,
+  guest,
+  guestId,
+  room,
+  mode = 'arrival',
+  chrome = false,
+  // Money not yet landed: the amber PAYMENT PENDING strip renders on either
+  // face until it does. The owner's rule — an unpaid guest still checks in,
+  // and the card says so instead of anyone having to remember.
+  paymentPending = false,
+}) {
   const payload = qrPayload({ guestId, booking, guest });
   const instay = mode === 'instay';
   const hasPhoto = instay && Boolean(guestId.photo);
@@ -154,6 +166,7 @@ export async function buildCardHtml({ hotel, booking, guest, guestId, room, mode
     credit_data_uri: credit,
 
     // Which face of the card this is (see the doc comment above).
+    show_paystrip: paymentPending ? '' : 'hidden',
     badge_text: instay ? 'Checked In' : 'Single Use',
     scan_label: instay ? (hasPhoto ? 'Guest photo ID' : 'Checked in') : 'Scan at reception',
     show_qr: hasPhoto ? 'hidden' : '',
@@ -163,8 +176,8 @@ export async function buildCardHtml({ hotel, booking, guest, guestId, room, mode
       ? `Checked in. This pass is valid until <b>check-out on ${day(booking.check_out)} ` +
         `at ${String(hotel.check_out_time).slice(0, 5)}</b>, then it expires automatically ` +
         `and the photo is deleted.`
-      : `Valid for <b>one check-in only</b>. This ID is cancelled the moment it is ` +
-        `scanned and cannot be reused or shared.`,
+      : `Valid for <b>one check-in only, within 48 hours of your check-in time</b>. ` +
+        `Cancelled the moment it is used; it cannot be reused or shared.`,
   });
 
   const unfilled = html.match(/\{\{\s*[\w_]+\s*\}\}/g);

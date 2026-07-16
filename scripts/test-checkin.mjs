@@ -272,6 +272,84 @@ ok(cxlGone[0].status === 'expired', "a cancelled booking's code is expired by th
 const cardAfter = await hitCard(today.code);
 ok(cardAfter.code === 410 && String(cardAfter.body).includes('No longer valid'), 'after the stay the card page says so, instead of impersonating a valid pass');
 
+// ── The unpaid guest: checked in, stamped, and the desk collects ──────────────
+// The owner's rule: payment is not a door. The code ships with the payment
+// email; an unpaid guest checks in normally and their pass says PAYMENT
+// PENDING until money lands.
+console.log('\n  ── payment pending ──');
+
+async function unpaidBooking({ checkIn, checkOut, callId }) {
+  const call = { providerCallId: callId, dialedNumber: '+27101234567', fromNumber: '+27821234567' };
+  const avail = await router.handle('check_availability', { check_in: checkIn, check_out: checkOut, guests: 2 }, call);
+  const held = await router.handle(
+    'hold_room',
+    { room_id: avail.rooms[0].room_id, check_in: checkIn, check_out: checkOut, guests_count: 2 },
+    call
+  );
+  await router.handle(
+    'save_guest_details',
+    {
+      booking_id: held.booking_id,
+      full_name: 'Sipho Ndlovu',
+      phone: '+27835550000',
+      email: 'sipho@example.com',
+      nationality: 'South African',
+      guests_count: 2,
+      double_confirmed: true,
+    },
+    call
+  );
+  const link = await router.handle('send_payment_link', { booking_id: held.booking_id }, call);
+  const { rows: gi } = await db.query(
+    `select verification_number from sena_guest_ids where booking_id = $1`,
+    [held.booking_id]
+  );
+  return { bookingId: held.booking_id, code: gi[0]?.verification_number, linkOk: link.ok };
+}
+
+const unpaid = await unpaidBooking({ checkIn: day(0), checkOut: day(2), callId: 'ci_unpaid' });
+ok(Boolean(unpaid.code), 'the CHECK-IN CODE is minted WITH the payment link — before any money moves');
+
+const upLookup = await hit({ action: 'lookup', code: unpaid.code });
+ok(
+  upLookup.body.state === 'ready' && upLookup.body.payment_pending === true,
+  'lookup on an unpaid booking → ready, flagged payment_pending'
+);
+
+const upDone = await hit({ action: 'checkin', code: unpaid.code, photo: PHOTO });
+ok(upDone.body.ok && upDone.body.payment_pending === true, 'the unpaid guest checks in — the system says so instead of turning them away');
+
+const upCard = await hitCard(unpaid.code);
+ok(
+  /class="paystrip"\s*>/.test(upCard.body) && upCard.body.includes('Payment pending'),
+  "and their pass wears the amber PAYMENT PENDING strip"
+);
+
+// A reference-shaped mistake gets a helpful answer, not a shrug.
+const refMistake = await hit({ action: 'lookup', code: 'JA-WX2MQ' });
+ok(
+  refMistake.code === 400 && /booking reference/.test(refMistake.body.reason),
+  'typing the booking reference is answered specifically — the exact confusion a real test hit'
+);
+
+// A paid guest's card must NOT wear the strip.
+const paidFresh = await paidBooking({ checkIn: day(0), checkOut: day(2), callId: 'ci_paid2' });
+const paidCard = await hitCard(paidFresh.code);
+ok(/class="paystrip"\s+hidden/.test(paidCard.body), "a PAID guest's pass carries no payment strip");
+
+// ── The 48-hour no-show window ────────────────────────────────────────────────
+const noShow = await unpaidBooking({ checkIn: day(0), checkOut: day(5), callId: 'ci_noshow' });
+await db.query(
+  `update sena_bookings set check_in = current_date - 3, check_out = current_date + 2 where id = $1`,
+  [noShow.bookingId]
+);
+await db.query(`select sena_expire_ended_guest_ids()`);
+const { rows: ns } = await db.query(
+  `select status from sena_guest_ids where verification_number = $1`,
+  [noShow.code]
+);
+ok(ns[0].status === 'expired', 'a code unused 48 hours past check-in time EXPIRES — no-shows do not hold keys');
+
 // ── The voice door: the box announces itself, the button follows ─────────────
 console.log('\n  ── the voice door ──');
 process.env.SENA_WEBHOOK_SECRET = 'voice-test-secret';
