@@ -36,11 +36,14 @@ RUN mkdir -p /voices && cd /voices \
  && curl -fsSL -o "${PIPER_VOICE}.onnx"      "${BASE}/${PIPER_VOICE}.onnx" \
  && curl -fsSL -o "${PIPER_VOICE}.onnx.json" "${BASE}/${PIPER_VOICE}.onnx.json"
 
-# Bake Whisper's weights into the image. Downloading 'small' on the first call
+# Bake Whisper's weights into the image. Downloading a model on the first call
 # means the first guest waits ninety seconds for a greeting — and blames the
-# hotel, not the cold start.
-ARG WHISPER_MODEL=small
-RUN python -c "from faster_whisper import WhisperModel; WhisperModel('${WHISPER_MODEL}', device='cpu', compute_type='int8')"
+# hotel, not the cold start. Both sizes go in: 'small' is the production floor,
+# 'base' is what a weak 2-core box runs (see WHISPER_MODEL in .env.example) —
+# whichever the env picks at runtime must already be here, or the download
+# comes back. base adds ~75MB to an image that is already 2GB.
+ARG WHISPER_MODELS="small base"
+RUN python -c "from faster_whisper import WhisperModel; import os; [WhisperModel(m, device='cpu', compute_type='int8') for m in '${WHISPER_MODELS}'.split()]"
 
 COPY agent/ /app/agent/
 COPY web/ /app/web/
