@@ -1,19 +1,25 @@
 <!doctype html>
 <!--
-  The deployment's front door. Before this file existed, the root of the Vercel
-  deployment was a bare 404 — technically correct (every real page lives under
-  /api/sena/*) and completely indistinguishable from a broken deploy. A person
-  checking "is it up?" deserves a page that says so and points at the doors.
+  The page the QR poster opens (CLAUDE.md §2 stage 1) — the guest's TWO DOORS:
 
-  This also pins Vercel's static output to public/ — without it, an app with no
-  framework serves the repository root, which is nobody's intention.
+    Option A — Call Sena. Talk to reception like a phone call, in the browser.
+               The button goes through /api/sena/voice, which redirects to the
+               voice stack when SENA_VOICE_URL is configured, and explains
+               politely when it is not. The voice stack is the one part of the
+               system that does not live on Vercel — see docs/voice-stack.md.
+
+    Option B — Check in. The arriving guest types the code from their
+               confirmation email, adds a photo, and walks in.
+
+  The staff scanner is deliberately a footnote, not a third button: this page
+  faces guests, and a guest should never wonder whether they are staff.
 -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
-<title>Sena — AI Front Desk</title>
+<title>Reception — Sena</title>
 <style>
   :root { --ink:#0B1220; --accent:#C8A24B; --paper:#F7F5F2; }
   * { box-sizing:border-box; }
@@ -21,29 +27,41 @@
          background:var(--paper); color:var(--ink);
          font:16px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif; }
   main { width:min(26rem,92vw); text-align:center; padding:2rem; }
-  .orb { width:64px; height:64px; margin:0 auto 1.5rem; border-radius:50%;
-         background:var(--accent); opacity:.9; }
-  h1 { font-size:1.5rem; margin:0 0 .3rem; letter-spacing:-.01em; }
-  p  { color:#6B7280; margin:0 0 2rem; font-size:.95rem; }
-  a.btn { display:block; margin-top:.8rem; padding:.95rem 1.25rem; border-radius:999px;
-          text-decoration:none; font-weight:600; font-size:1rem;
-          background:var(--ink); color:#fff; }
+  .orb { width:72px; height:72px; margin:0 auto 1.6rem; border-radius:50%;
+         background:var(--accent); animation:pulse 2.4s ease-in-out infinite; }
+  @keyframes pulse {
+    0%,100% { transform:scale(1);    box-shadow:0 0 0 0    rgba(200,162,75,.35); }
+    50%     { transform:scale(1.04); box-shadow:0 0 0 12px rgba(200,162,75,0); }
+  }
+  @media (prefers-reduced-motion: reduce) { .orb { animation:none; } }
+  h1 { font-size:1.55rem; margin:0 0 .3rem; letter-spacing:-.01em; }
+  p.sub { color:#6B7280; margin:0 0 2rem; font-size:.95rem; }
+  a.btn { display:block; margin-top:.85rem; padding:1rem 1.25rem; border-radius:999px;
+          text-decoration:none; font-weight:600; font-size:1.02rem;
+          background:var(--ink); color:#fff; transition:transform .08s ease; }
+  a.btn:hover { transform:translateY(-1px); }
   a.btn.ghost { background:#fff; color:var(--ink); border:1px solid #D6D9E0; }
-  footer { margin-top:2.5rem; padding-top:1.2rem; border-top:1px solid #E5E7EB;
-           font-size:.78rem; color:#9CA3AF; }
+  .ai-notice { margin-top:2.4rem; padding-top:1.2rem; border-top:1px solid #E5E7EB;
+               font-size:.8rem; color:#9CA3AF; }
+  .ai-notice a { color:#9CA3AF; }
 </style>
 </head>
 <body>
 <main>
   <div class="orb"></div>
-  <h1>Sena — AI Front Desk</h1>
-  <p>The system is up. Guests arrive through the hotel's reception page;
-     these are the working doors.</p>
+  <h1>Reception</h1>
+  <p class="sub">Sena is our reception assistant — book a room, ask a question,
+     or check in if you've arrived.</p>
 
-  <a class="btn" href="/api/sena/checkin">Guest check-in — enter your code</a>
-  <a class="btn ghost" href="/api/sena/desk">Front desk — staff scanner</a>
+  <a class="btn" href="/api/sena/voice">Call Sena — talk to reception</a>
+  <a class="btn ghost" href="/api/sena/checkin">I have a booking — check in with my code</a>
 
-  <footer>Built by MuleSoo Digital Services · mulesoo.com</footer>
+  <p class="ai-notice">
+    Calls are answered by an AI assistant and recorded so we can help if
+    something goes wrong.<br>
+    Hotel staff: <a href="/api/sena/desk">front-desk scanner</a> ·
+    Built by MuleSoo Digital Services
+  </p>
 </main>
 </body>
 </html>
