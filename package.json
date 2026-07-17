@@ -24,7 +24,8 @@
         "test:agent": "node scripts/test-agent.mjs",
         "test:voice": "node scripts/test-agent.mjs --voice",
         "build:install": "node scripts/build-install.mjs",
-        "voice:online": "node scripts/voice-online.mjs"
+        "voice:online": "node scripts/voice-online.mjs",
+        "audit": "node scripts/audit-journey.mjs"
     },
     "devDependencies": {
         "@electric-sql/pglite": "^0.5.4",
