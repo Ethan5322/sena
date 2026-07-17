@@ -123,9 +123,12 @@ async function llm(messages, { tools = true } = {}) {
   const model = process.env.LLM_MODEL;
   if (!base || !key || !model) return { unconfigured: true };
 
-  // One retry on a rate limit or a transient 5xx: the demo brain is a free
-  // tier, and a single 429 must read as a beat of "typing…", not as Sena
-  // abandoning the guest mid-booking.
+  // The demo brain is a free tier with a PER-MINUTE request cap, and the cap
+  // is shared by every environment holding this key — a burst anywhere 429s
+  // everyone for the rest of the rolling minute. So the waits are real: long
+  // enough to cross into the next window (the function has 60s; use it). The
+  // guest sees a slow "typing…", never an apology.
+  const waits = [2000, 20000, 25000];
   for (let attempt = 0; ; attempt++) {
     let r;
     try {
@@ -140,11 +143,11 @@ async function llm(messages, { tools = true } = {}) {
         }),
       });
     } catch (err) {
-      if (attempt === 0) { await new Promise((s) => setTimeout(s, 1200)); continue; }
+      if (attempt < waits.length) { await new Promise((s) => setTimeout(s, waits[attempt])); continue; }
       throw err;
     }
-    if ((r.status === 429 || r.status >= 500) && attempt === 0) {
-      await new Promise((s) => setTimeout(s, 1500));
+    if ((r.status === 429 || r.status >= 500) && attempt < waits.length) {
+      await new Promise((s) => setTimeout(s, waits[attempt]));
       continue;
     }
     const j = await r.json().catch(() => ({}));
