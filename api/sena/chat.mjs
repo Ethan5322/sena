@@ -311,6 +311,80 @@ export function repairHistory(history) {
   return clean;
 }
 
+// ── Answer common questions from the Master Guide, with NO AI ────────────────
+// The free brain has a daily wall (a guest asked breakfast times and got a
+// rate-limit apology, which is absurd — the answer is written down). This does
+// deterministic keyword retrieval over the hotel's own guide: it splits the
+// guide into paragraphs, scores each against the guest's words, and returns the
+// best match when it is clearly relevant. Works with zero AI quota, and adapts
+// to whatever the owner writes because it matches words, not fixed labels.
+const STOP = new Set(
+  ('the a an of to is are do does did you your we our i me my can could would will ' +
+   'what when where how much many for on in at and or with have has any please tell ' +
+   'about it that this they them there here get got need want know may might should ' +
+   'hello hi hey good day morning afternoon evening thanks thank').split(' ')
+);
+
+// Words that signal "I want to book", not "I have a question" — these must go to
+// the booking tree / the model, never to a static paragraph.
+const BOOKING_WORDS = /\b(book|booking|reserve|reservation|availab|room for|stay|night|check ?in|check ?out|pay|cancel)\b/i;
+
+// wi-fi → wifi, check-in → checkin: join hyphenated/apostrophe'd words so a
+// guest typing "wifi" matches a guide that wrote "Wi-Fi".
+const normalize = (s) =>
+  String(s || '')
+    .toLowerCase()
+    .replace(/(\w)[-'](\w)/g, '$1$2')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+export function faqFromKnowledge(userText, knowledge) {
+  const text = normalize(userText);
+  if (!knowledge || !text || BOOKING_WORDS.test(text)) return null;
+
+  const qWords = [...new Set(text.split(' ').filter((w) => w.length > 2 && !STOP.has(w)))];
+  if (!qWords.length) return null;
+
+  // Split into paragraphs, then into lines when a paragraph is a block of
+  // "LABEL: answer" rows (the guide's FAQ section), so each answer stands alone.
+  const chunks = String(knowledge)
+    .split(/\n\s*\n/)
+    .flatMap((p) => (p.length > 300 ? p.split(/\n/) : [p]))
+    .map((c) => c.trim())
+    .filter((c) => c.length > 8);
+
+  let best = null;
+  let bestScore = 0;
+  for (const c of chunks) {
+    const words = new Set(normalize(c).split(' '));
+    // A label is a genuine "HEADING: answer" prefix — a colon, with only a few
+    // words before it. A query word in the label ("PARKING:", "BREAKFAST:")
+    // scores 3; the same word merely mentioned in a sentence scores 1. Lines
+    // with no real label (room descriptions, behaviour rules) get no free 3,
+    // which is what stops "parking?" landing on "…secure parking" or "time"
+    // landing on "one question at a time".
+    const colon = c.indexOf(':');
+    const head = colon > 0 && colon <= 40 ? normalize(c.slice(0, colon)) : '';
+    const label = head && head.split(' ').length <= 5 ? head.split(' ') : [];
+    // A word matches a label word if equal, or if both are 5+ chars and share
+    // their first five — a cheap stemmer so "located" finds "LOCATION".
+    const inLabel = (w) => label.some((lw) => lw === w || (lw.length >= 5 && w.length >= 5 && lw.slice(0, 5) === w.slice(0, 5)));
+    let score = 0;
+    for (const w of qWords) {
+      if (inLabel(w)) score += 3;
+      else if (words.has(w)) score += 1;
+    }
+    if (score > bestScore) { bestScore = score; best = c; }
+  }
+
+  // Require a label hit (3) — that is what stops "parking?" matching a room's
+  // "secure parking" amenity instead of the parking answer. Content-only
+  // overlap is left to the AI/tree, which is the honest fallback.
+  if (!best || bestScore < 3) return null;
+  return best.replace(/\s+/g, ' ').trim().slice(0, 600);
+}
+
 // ── Throttle: same honest per-instance limiter as check-in ───────────────────
 const BUCKET = new Map();
 function throttled(req) {
@@ -468,6 +542,30 @@ export default async function handler(req, res) {
     // guest into the guided booking (which uses no model at all), and keep the
     // conversation alive instead of showing an error card.
     if (/429|rate.?limit/i.test(String(err?.message || ''))) {
+      // Before apologising, try to just ANSWER: if the guest asked a question
+      // the Master Guide covers, serve it straight from the guide — no AI, no
+      // wait. This is what turns a rate-limited brain from "broken" into
+      // "slower but still helpful".
+      try {
+        const last = [...(Array.isArray(req.body?.messages) ? req.body.messages : [])]
+          .reverse()
+          .find((m) => m?.role === 'user' && typeof m.content === 'string');
+        const { db } = getServices();
+        const { rows } = await db.query(
+          `select knowledge from sena_hotels where id = $1`,
+          [process.env.SENA_DEFAULT_HOTEL_ID]
+        );
+        const answer = faqFromKnowledge(last?.content, rows[0]?.knowledge);
+        if (answer) {
+          return res.status(200).json({
+            ok: true,
+            messages: [{ role: 'assistant', content: answer }],
+            actions: {},
+          });
+        }
+      } catch (e2) {
+        console.error('[sena] faq fallback failed:', e2);
+      }
       const busy = {
         role: 'assistant',
         content:
