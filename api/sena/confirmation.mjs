@@ -65,13 +65,14 @@ export default async function handler(req, res) {
 
   const { guest_id: guestId, booking, guest, room, hotel, payment } = rows[0];
 
-  // A guest ID only exists once a booking is paid and confirmed (the router's
-  // revenue gate), so reaching this line normally means paid. The belt to that
-  // braces: if the payment row is somehow gone, do not print "PAID" over it.
-  if (!payment) {
+  // The guest ID is minted WITH the payment link, so unpaid bookings reach
+  // this page too — deliberately. A pay-on-arrival guest downloads this
+  // document and it says PAYMENT PENDING in amber; the desk collects. A
+  // cancelled booking, though, gets no confirmation to wave around.
+  if (booking.status === 'cancelled') {
     return res
-      .status(409)
-      .send(notice('Not available', 'This booking has no completed payment on record. Please contact the hotel.'));
+      .status(410)
+      .send(notice('Booking cancelled', 'This booking was cancelled. Please contact the hotel if that is unexpected.'));
   }
 
   try {

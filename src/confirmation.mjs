@@ -112,9 +112,20 @@ export async function buildConfirmationHtml({ hotel, booking, guest, guestId, ro
     currency: esc(hotel.currency),
     total: total.toFixed(2),
 
-    payment_provider: esc(payment?.provider || 'paystack'),
-    payment_reference: esc(payment?.provider_reference || '—'),
-    paid_at: payment?.paid_at ? new Date(payment.paid_at).toLocaleString('en-ZA') : '—',
+    // Paid and pending are both real states of a real booking. Pay-on-arrival
+    // guests carry this document to the desk, so it must say the truth in
+    // amber rather than refuse to exist.
+    badge_text: payment ? '✓ PAID' : 'PAYMENT PENDING',
+    badge_style: payment ? '' : 'background:#FEF3C7;color:#92400E;border:1px solid #F59E0B',
+    payment_note: payment
+      ? `Paid via ${esc(payment.provider)} · ref ${esc(payment.provider_reference)} · ${
+          payment.paid_at ? new Date(payment.paid_at).toLocaleString('en-ZA') : '—'
+        }`
+      : 'Payable online (link in your email) or at the front desk on arrival. ' +
+        'If you have not arrived within 48 hours of your check-in time, this booking expires.',
+    state_color: payment ? '#15803D' : '#B45309',
+    state_text: payment ? 'PAID' : 'PENDING',
+    total_label: payment ? 'Total paid' : 'Total due',
 
     guest_id_number: esc(guestId.guest_id_number),
     verification_number: esc(guestId.verification_number),

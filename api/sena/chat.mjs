@@ -255,6 +255,12 @@ async function handleFlow(flow, session, router, hotelId, res) {
       hold_minutes: hold.hold_minutes,
       pay_url: pay?.pay_url || null,
       check_in_code: pay?.check_in_code || null,
+      // The check-in code IS the verification number, and the confirmation
+      // document (MuleSoo stamp, terms, QR) now serves pending bookings too —
+      // this is the pay-later guest's "download my PDF" button.
+      confirmation_url: pay?.check_in_code
+        ? '/api/sena/confirmation?v=' + encodeURIComponent(pay.check_in_code)
+        : null,
       email_sent: !!pay?.ok,
     });
   }
@@ -510,6 +516,9 @@ const PAGE = `<!doctype html>
   .chip { border:1px solid var(--accent); background:#FFF; color:var(--ink); border-radius:999px;
           padding:.45rem .95rem; font:600 .85rem/1 system-ui,sans-serif; cursor:pointer; }
   .chip.glow { background:var(--accent); }
+  .chiprow { display:flex; flex-wrap:wrap; gap:.45rem; margin:.35rem 0 .5rem; }
+  .inline-date { padding:.45rem .7rem; border:1px solid var(--line); border-radius:999px;
+                 font:inherit; font-size:.88rem; background:#fff; }
   .fcard { max-width:92%; margin:.4rem 0; padding:.9rem 1rem; border-radius:14px; background:#fff;
            border:1px solid var(--line); }
   .fcard h3 { margin:0 0 .6rem; font-size:.95rem; }
@@ -674,6 +683,9 @@ const PAGE = `<!doctype html>
     e.preventDefault();
     var text = $('box').value.trim();
     $('box').value = '';
+    // Mid-booking, the typed answer belongs to Sena's current question — the
+    // flow — not to the language model.
+    if (ASK) { answerTyped(text); return; }
     send(text);
   });
 
@@ -723,135 +735,239 @@ const PAGE = `<!doctype html>
     return d.toISOString().slice(0, 10);
   }
 
-  function stepDates() {
-    var c = card('Book a room');
-    var row = el('div', 'row');
-    var d1 = el('input'); d1.type = 'date'; d1.value = FLOW.check_in || isoPlus(1); d1.min = isoPlus(0);
-    var d2 = el('input'); d2.type = 'date'; d2.value = FLOW.check_out || isoPlus(2); d2.min = isoPlus(1);
-    var g1 = el('div'); labelled(g1, 'Check-in', d1);
-    var g2 = el('div'); labelled(g2, 'Check-out', d2);
-    row.appendChild(g1); row.appendChild(g2);
-    c.appendChild(row);
-    var guests = el('select');
-    for (var i = 1; i <= 6; i++) {
-      var o = el('option', '', i + (i === 1 ? ' guest' : ' guests'));
-      o.value = i; guests.appendChild(o);
-    }
-    guests.value = FLOW.guests || 2;
-    labelled(c, 'Guests', guests);
-    var go = el('button', 'fbtn', 'See available rooms');
-    go.type = 'button';
-    go.onclick = function () {
-      FLOW.check_in = d1.value; FLOW.check_out = d2.value; FLOW.guests = guests.value;
-      flowPost({ step: 'rooms', check_in: d1.value, check_out: d2.value, guests: guests.value }, function (b) {
-        if (!b.ok) { bubble('assistant', b.reason); return; }
-        stepRooms(b);
-      }, go);
-    };
-    c.appendChild(go);
+  // The flow speaks AS SENA. Every question is a chat bubble, every answer
+  // becomes a guest bubble, so the booking reads as one professional
+  // conversation — not a form bolted onto a chat (the owner's words: mixing
+  // the two "looks stupid". He was right).
+  var ASK = null;   // which flow question the typed input currently answers
+
+  function sena(text) { bubble('assistant', text); }
+  function me(text) { bubble('user', text); }
+  function prettyDate(iso) {
+    try { return new Date(iso + 'T12:00:00').toDateString(); } catch (e) { return iso; }
   }
 
-  function stepRooms(b) {
-    if (!b.rooms.length) {
-      bubble('assistant', 'Nothing is free for those dates — try different dates.');
-      stepDates();
-      return;
-    }
-    var c = card(b.nights + (b.nights === 1 ? ' night — choose your room' : ' nights — choose your room'));
-    b.rooms.forEach(function (r) {
-      var o = el('div', 'roomopt');
-      o.appendChild(el('b', '', r.name + ' — ' + r.currency + ' ' + r.rate + ' / night'));
-      o.appendChild(el('div', 'meta',
-        r.plan + ' · sleeps ' + r.sleeps + ' · total ' + r.currency + ' ' + r.total +
-        (r.amenities && r.amenities.length ? ' · ' + r.amenities.join(', ') : '')));
-      var pick = el('button', 'fbtn gold', 'Choose ' + r.name);
-      pick.type = 'button';
-      pick.onclick = function () {
-        FLOW.room_id = r.room_id; FLOW.room_name = r.name; FLOW.total = r.currency + ' ' + r.total;
-        stepDetails();
-      };
-      o.appendChild(pick);
-      c.appendChild(o);
+  function chipRow(opts) {
+    var row = el('div', 'chiprow');
+    opts.forEach(function (o) {
+      var b = el('button', 'chip', o.label);
+      b.type = 'button';
+      b.onclick = function () { row.remove(); o.go(); };
+      row.appendChild(b);
+    });
+    thread.appendChild(row);
+    scroll();
+    return row;
+  }
+
+  function inlineDate(question, min, cb) {
+    sena(question);
+    var row = el('div', 'chiprow');
+    var d = el('input', 'inline-date');
+    d.type = 'date'; d.min = min;
+    var ok = el('button', 'chip', 'OK');
+    ok.type = 'button';
+    ok.onclick = function () {
+      if (!d.value) return;
+      row.remove();
+      me(prettyDate(d.value));
+      cb(d.value);
+    };
+    row.appendChild(d); row.appendChild(ok);
+    thread.appendChild(row);
+    scroll();
+  }
+
+  function startBooking() {
+    FLOW = {}; ASK = null;
+    sena("Wonderful — let's get you booked. I'll take it step by step.");
+    inlineDate('First, what date would you like to check in?', isoPlus(0), function (v) {
+      FLOW.check_in = v;
+      inlineDate('And what date will you check out?', v, function (w) {
+        if (w <= v) { sena('Check-out must be after check-in — let us try those dates again.'); startBooking(); return; }
+        FLOW.check_out = w;
+        askGuests();
+      });
     });
   }
 
-  function stepDetails() {
-    var c = card('Your details — the payment link and check-in code go to your email');
-    var name = labelled(c, 'Full name', el('input'));
-    var phone = labelled(c, 'Phone (e.g. +27 82 123 4567)', el('input'));
-    var email = labelled(c, 'Email', el('input'));
-    email.type = 'email';
-    var nat = labelled(c, 'Nationality', el('input'));
-    var reqs = labelled(c, 'Special requests (optional)', el('input'));
-    name.value = FLOW.full_name || ''; phone.value = FLOW.phone || '';
-    email.value = FLOW.email || ''; nat.value = FLOW.nationality || '';
-    reqs.value = FLOW.special_requests || '';
-    var go = el('button', 'fbtn', 'Review my booking');
-    go.type = 'button';
-    go.onclick = function () {
-      FLOW.full_name = name.value.trim(); FLOW.phone = phone.value.trim();
-      FLOW.email = email.value.trim(); FLOW.nationality = nat.value.trim();
-      FLOW.special_requests = reqs.value.trim();
-      if (FLOW.full_name.length < 2 || FLOW.phone.length < 7 || FLOW.email.indexOf('@') < 1) {
-        bubble('assistant', 'I need your full name, a valid phone number and a valid email to continue.');
+  function askGuests() {
+    sena('How many guests will be staying?');
+    var opts = [];
+    for (var i = 1; i <= 6; i++) (function (n) {
+      opts.push({ label: String(n), go: function () {
+        me(n + (n === 1 ? ' guest' : ' guests'));
+        FLOW.guests = n;
+        fetchRooms();
+      } });
+    })(i);
+    chipRow(opts);
+  }
+
+  function fetchRooms() {
+    sena('One moment — let me check what is available for you…');
+    flowPost({ step: 'rooms', check_in: FLOW.check_in, check_out: FLOW.check_out, guests: FLOW.guests }, function (b) {
+      if (!b.ok) { sena(b.reason); chipRow([{ label: 'Try again', go: startBooking }]); return; }
+      if (!b.rooms.length) {
+        sena('I am sorry — nothing is free for those dates. Shall we try different dates?');
+        chipRow([{ label: 'Try other dates', go: startBooking }]);
         return;
       }
-      stepReview();
-    };
-    c.appendChild(go);
-  }
-
-  function stepReview() {
-    var c = card('Is every detail correct?');
-    var dl = el('dl', 'review');
-    [['Stay', FLOW.check_in + ' → ' + FLOW.check_out + ' · ' + FLOW.guests + ' guest(s)'],
-     ['Room', FLOW.room_name + ' · ' + FLOW.total],
-     ['Name', FLOW.full_name], ['Phone', FLOW.phone], ['Email', FLOW.email],
-     ['Nationality', FLOW.nationality || '—'],
-     ['Requests', FLOW.special_requests || '—']].forEach(function (kv) {
-      dl.appendChild(el('dt', '', kv[0]));
-      dl.appendChild(el('dd', '', kv[1]));
+      var lines = b.rooms.map(function (r) {
+        return r.name + ' (' + r.plan + ', sleeps ' + r.sleeps + ') — ' + r.currency + ' ' + r.rate +
+          ' per night, ' + r.currency + ' ' + r.total + ' for the stay';
+      });
+      sena('For ' + b.nights + (b.nights === 1 ? ' night' : ' nights') + ' I can offer you:\n\n• ' +
+        lines.join('\n• ') + '\n\nWhich room would you like?');
+      chipRow(b.rooms.map(function (r) {
+        return { label: r.name, go: function () {
+          me(r.name);
+          FLOW.room_id = r.room_id; FLOW.room_name = r.name;
+          FLOW.total_text = r.currency + ' ' + r.total;
+          sena('An excellent choice.');
+          askTyped('full_name');
+        } };
+      }));
     });
-    c.appendChild(dl);
-    var go = el('button', 'fbtn gold', 'Confirm booking');
-    go.type = 'button';
-    go.onclick = function () {
-      flowPost({
-        step: 'book', check_in: FLOW.check_in, check_out: FLOW.check_out, guests: FLOW.guests,
-        room_id: FLOW.room_id, full_name: FLOW.full_name, phone: FLOW.phone, email: FLOW.email,
-        nationality: FLOW.nationality, special_requests: FLOW.special_requests,
-      }, function (b) {
-        if (!b.ok) {
-          bubble('assistant', b.reason);
-          if (b.room_gone) stepDates();
-          return;
+  }
+
+  var QUESTIONS = {
+    full_name: {
+      q: 'May I have your full name, please?',
+      bad: 'Could you give me your full name as it appears on your ID?',
+      valid: function (v) { return v.length >= 2; },
+    },
+    phone: {
+      q: 'Thank you. And your phone number? (for example +27 82 123 4567)',
+      bad: 'That number does not look complete — could you give it again, with the country code if possible?',
+      valid: function (v) { return /^[+\d][\d\s()-]{6,}$/.test(v); },
+    },
+    email: {
+      q: 'Your email address? Your payment link, confirmation and check-in code will go there, so letter-perfect please.',
+      bad: 'That email does not look right — could you type it again carefully?',
+      valid: function (v) { return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v); },
+    },
+    nationality: {
+      q: 'What is your nationality?',
+      valid: function () { return true; },
+      optional: true,
+    },
+    special_requests: {
+      q: 'Any special requests for your stay? (early arrival, quiet room, anything at all)',
+      valid: function () { return true; },
+      optional: true,
+    },
+  };
+  var ORDER = ['full_name', 'phone', 'email', 'nationality', 'special_requests'];
+
+  function askTyped(key) {
+    ASK = key;
+    sena(QUESTIONS[key].q);
+    $('box').placeholder = 'Type your answer…';
+    if (QUESTIONS[key].optional) {
+      chipRow([{ label: 'Skip', go: function () { me('(skip)'); storeAnswer(key, ''); } }]);
+    }
+    $('box').focus();
+  }
+
+  function answerTyped(text) {
+    if (!text) return;
+    var key = ASK;
+    me(text);
+    if (!QUESTIONS[key].valid(text)) { sena(QUESTIONS[key].bad); return; }
+    // Remove a lingering Skip chip for this question, if any.
+    var rows = thread.querySelectorAll('.chiprow');
+    if (rows.length) rows[rows.length - 1].remove();
+    storeAnswer(key, text);
+  }
+
+  function storeAnswer(key, value) {
+    FLOW[key] = value;
+    ASK = null;
+    $('box').placeholder = 'Type your message…';
+    var next = ORDER[ORDER.indexOf(key) + 1];
+    if (next) { askTyped(next); return; }
+    review();
+  }
+
+  function review() {
+    sena('Let me make sure I have everything exactly right:\n\n' +
+      'Name: ' + FLOW.full_name + '\n' +
+      'Phone: ' + FLOW.phone + '\n' +
+      'Email: ' + FLOW.email + '\n' +
+      'Nationality: ' + (FLOW.nationality || '—') + '\n' +
+      'Requests: ' + (FLOW.special_requests || '—') + '\n' +
+      'Stay: ' + prettyDate(FLOW.check_in) + ' to ' + prettyDate(FLOW.check_out) +
+      ' · ' + FLOW.guests + ' guest(s)\n' +
+      'Room: ' + FLOW.room_name + ' — total ' + FLOW.total_text + '\n\n' +
+      'Is every detail correct?');
+    chipRow([
+      { label: '✓ Yes, everything is correct', go: doBook },
+      { label: 'Change my details', go: function () { me('I would like to change something'); askTyped('full_name'); } },
+      { label: 'Start over', go: function () { me('Start over'); startBooking(); } },
+    ]);
+  }
+
+  function doBook() {
+    me('Yes, everything is correct');
+    sena('Thank you. Booking that for you now…');
+    flowPost({
+      step: 'book', check_in: FLOW.check_in, check_out: FLOW.check_out, guests: FLOW.guests,
+      room_id: FLOW.room_id, full_name: FLOW.full_name, phone: FLOW.phone, email: FLOW.email,
+      nationality: FLOW.nationality || '', special_requests: FLOW.special_requests || '',
+    }, function (b) {
+      if (!b.ok) {
+        sena(b.reason);
+        chipRow([{ label: b.room_gone ? 'Check availability again' : 'Try again', go: startBooking }]);
+        return;
+      }
+      payChoice(b);
+    });
+  }
+
+  function payChoice(b) {
+    sena('You are booked, ' + (FLOW.full_name.split(' ')[0]) + '! Your reference is ' + b.reference +
+      ' and the total is ' + b.currency + ' ' + b.total + '.' +
+      (b.email_sent ? ' I have also emailed everything to ' + FLOW.email + '.' : '') +
+      '\n\nWould you like to pay now, or pay when you arrive?');
+    chipRow([
+      { label: '💳 Pay now', go: function () {
+        me('I will pay now');
+        sena('Opening the secure Paystack payment page for you — it takes about a minute. ' +
+          'Your room is held ' + b.hold_minutes + ' minutes for online payment.');
+        if (b.pay_url) {
+          window.open(b.pay_url, '_blank', 'noopener');
+          renderActions({ pay_url: b.pay_url, check_in_code: b.check_in_code });
         }
-        stepDone(b);
-      }, go);
-    };
-    c.appendChild(go);
-    var back = el('button', 'fbtn', 'Change something');
-    back.type = 'button';
-    back.style.background = '#fff'; back.style.color = '#0B1220'; back.style.border = '1px solid #D6D9E0';
-    back.onclick = function () { stepDetails(); };
-    c.appendChild(back);
+        finishNote(b);
+      } },
+      { label: '🏨 Pay when I arrive', go: function () {
+        me('I will pay when I arrive');
+        sena('Perfectly fine — you can settle at the front desk. Please download your booking ' +
+          'confirmation below: it carries your details, the terms, and your verification QR code. ' +
+          'Keep it for arrival. If you have not arrived within 48 hours of your check-in time, ' +
+          'the booking expires automatically.');
+        if (b.confirmation_url) {
+          var dl = document.createElement('a');
+          dl.className = 'action pay';
+          dl.href = b.confirmation_url;
+          dl.target = '_blank'; dl.rel = 'noopener';
+          dl.textContent = '⬇ Download my booking confirmation (PDF)';
+          thread.appendChild(dl);
+        }
+        renderActions({ check_in_code: b.check_in_code });
+        finishNote(b);
+      } },
+    ]);
   }
 
-  function stepDone(b) {
-    var c = card('Booked — reference ' + b.reference);
-    c.appendChild(el('div', '', 'Total: ' + b.currency + ' ' + b.total +
-      (b.email_sent ? '. The payment link and your check-in code are in your email.' : '.')));
-    renderActions({ pay_url: b.pay_url, check_in_code: b.check_in_code });
-    var note = el('div', 'meta');
-    note.style.color = '#6B7280'; note.style.fontSize = '.85rem'; note.style.marginTop = '.6rem';
-    note.textContent = 'Pay now to confirm instantly (the room is held ' + b.hold_minutes +
-      ' minutes for online payment) — or pay at the front desk when you arrive. ' +
-      'Your check-in code stays valid either way; if you have not arrived within 48 hours ' +
-      'of your check-in time, the booking expires automatically.';
-    c.appendChild(note);
+  function finishNote(b) {
+    sena('On arrival: enter your check-in code on our reception page (or scan the QR on your ' +
+      'confirmation at the desk), take a quick photo, and your guest ID is issued — you are ' +
+      'checked in straight away. Anything else I can help you with?');
   }
 
-  $('bookbtn').onclick = function () { stepDates(); };
+  $('bookbtn').onclick = function () { me('I would like to book a room'); startBooking(); };
 
   // A fresh visitor should not face an empty void: Sena opens the conversation.
   if (HISTORY.length === 0) send('Hello');

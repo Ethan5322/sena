@@ -156,7 +156,7 @@ footer img { height: 34px; }
     <div class="doc-kind">
       <div class="kind">Booking Confirmation</div>
       <div class="ref">{{reference}}</div>
-      <span class="paid-badge">✓ PAID</span>
+      <span class="paid-badge" style="{{badge_style}}">{{badge_text}}</span>
     </div>
   </header>
 
@@ -194,10 +194,10 @@ footer img { height: 34px; }
         <td>{{currency}} {{total}}</td>
       </tr>
       <tr>
-        <td style="color:var(--muted)">Paid via {{payment_provider}} · ref {{payment_reference}} · {{paid_at}}</td>
-        <td style="color:#15803D;font-weight:600">PAID</td>
+        <td style="color:var(--muted)">{{payment_note}}</td>
+        <td style="color:{{state_color}};font-weight:600">{{state_text}}</td>
       </tr>
-      <tr class="total"><td>Total paid</td><td>{{currency}} {{total}}</td></tr>
+      <tr class="total"><td>{{total_label}}</td><td>{{currency}} {{total}}</td></tr>
     </table>
   </section>
 
