@@ -32,7 +32,7 @@
   "name": "Sena — AI Front Desk",
 
   "$firstMessage_comment": "AI disclosure inside the first ten seconds is non-negotiable (CLAUDE.md §0 Disclosure Policy). It is here, in the very first utterance, not left to the model to remember. {{hotel_name}} is substituted from the hotel row before the bot joins the room.",
-  "firstMessage": "Hello, and a very warm welcome to {{hotel_name}}! This is Sena speaking — I'm the hotel's AI receptionist, and I can book you a room or answer any question about your stay. Just so you know, our call is recorded to keep your booking safe. Now — how may I help you today?",
+  "firstMessage": "Good {{time_of_day}}, and a very warm welcome to {{hotel_name}}. My name is Sena, the hotel's AI receptionist. This call is recorded to keep your booking and information secure under our data-privacy policy. I can assist you with a new booking, an existing booking, or any question about your stay. How may I assist you today?",
 
   "model": {
     "provider": "anthropic",

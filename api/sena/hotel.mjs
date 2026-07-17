@@ -31,7 +31,7 @@ export default async function handler(req, res) {
 
   try {
     const { rows } = await database().query(
-      `select id, name, address, currency, check_in_time, check_out_time,
+      `select id, name, address, currency, timezone, check_in_time, check_out_time,
               hold_minutes, cancellation_policy, early_late_policy,
               escalation_phone, escalation_whatsapp, knowledge
          from sena_hotels
@@ -77,6 +77,9 @@ export default async function handler(req, res) {
         escalation_whatsapp: h.escalation_whatsapp,
         // The hotel's reference document, as a ready-to-drop prompt block.
         hotel_reference: hotelReference,
+        // For the "Good morning/afternoon/evening" greeting — the bot computes
+        // the time of day in the HOTEL's timezone, not the server's.
+        timezone: h.timezone || 'Africa/Johannesburg',
       },
       // Not a prompt variable — the agent needs it when escalate_to_human fires
       // and there is no line to transfer to.

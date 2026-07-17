@@ -169,8 +169,24 @@ async def run_bot(room: str, hotel_id: str, token: str, parts: WarmParts | None 
     # data, she does not know it.
     context_data = await client.hotel_context(hotel_id)
     system_prompt = render_system_prompt(context_data["prompt_vars"])
-    greeting = cfg.first_message.replace(
-        "{{hotel_name}}", context_data["prompt_vars"]["hotel_name"]
+
+    # "Good morning / afternoon / evening" — in the HOTEL's timezone, not the
+    # server's. A greeting that gets the time of day wrong sounds like a call
+    # centre on another continent, which is exactly the impression to avoid.
+    try:
+        from zoneinfo import ZoneInfo
+        from datetime import datetime
+
+        tz = context_data["prompt_vars"].get("timezone") or "Africa/Johannesburg"
+        hour = datetime.now(ZoneInfo(tz)).hour
+    except Exception:
+        hour = 12
+    time_of_day = "morning" if hour < 12 else ("afternoon" if hour < 17 else "evening")
+
+    greeting = (
+        cfg.first_message
+        .replace("{{hotel_name}}", context_data["prompt_vars"]["hotel_name"])
+        .replace("{{time_of_day}}", time_of_day)
     )
     escalation_phone = context_data.get("escalation_phone")
 

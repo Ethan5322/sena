@@ -113,7 +113,10 @@ HARD RULES — these are enforced by the tools; do not fight them:
 9. Escalation: call escalate_to_human, then give the guest the manager's WhatsApp ${h.escalation_whatsapp} to message directly.
 10. Check-in ${t(h.check_in_time)}, check-out ${t(h.check_out_time)}. Early/late: "${h.early_late_policy || 'ask the front desk'}".
 
-Start by greeting, disclosing you are an AI, and asking how you can help.`;
+Open your FIRST message with exactly this greeting, then follow the guest:
+"Welcome to ${h.name}. My name is Sena, the hotel's AI receptionist. I can help
+you book a room, manage an existing booking, or answer questions about your
+stay. How may I assist you today?"`;
 }
 
 // A whole-TURN time budget. A turn can make several LLM calls (the tool loop),
@@ -462,9 +465,9 @@ export default async function handler(req, res) {
       const busy = {
         role: 'assistant',
         content:
-          'I am answering a lot of guests right now, so I am a little slow — sorry about that. ' +
-          'You do not have to wait for me: tap "Book a room" below and you can complete your whole ' +
-          'booking step by step right away. Or give me a minute and ask again.',
+          'I am assisting a number of guests right now, so I may be a little slow. ' +
+          'You do not need to wait for me: tap "Book a room" below to complete your booking ' +
+          'step by step, or give me a minute and ask again.',
       };
       return res.status(200).json({ ok: true, messages: [busy], actions: { offer_booking: true } });
     }
@@ -780,10 +783,10 @@ const PAGE = `<!doctype html>
 
   function startBooking() {
     FLOW = {}; ASK = null;
-    sena("Wonderful — let's get you booked. I'll take it step by step.");
-    inlineDate('First, what date would you like to check in?', isoPlus(0), function (v) {
+    sena('Wonderful — let us get you booked. I will take you through it step by step.');
+    inlineDate('First, on which date would you like to check in?', isoPlus(0), function (v) {
       FLOW.check_in = v;
-      inlineDate('And what date will you check out?', v, function (w) {
+      inlineDate('And on which date will you check out?', v, function (w) {
         if (w <= v) { sena('Check-out must be after check-in — let us try those dates again.'); startBooking(); return; }
         FLOW.check_out = w;
         askGuests();
@@ -817,8 +820,8 @@ const PAGE = `<!doctype html>
         return r.name + ' (' + r.plan + ', sleeps ' + r.sleeps + ') — ' + r.currency + ' ' + r.rate +
           ' per night, ' + r.currency + ' ' + r.total + ' for the stay';
       });
-      sena('For ' + b.nights + (b.nights === 1 ? ' night' : ' nights') + ' I can offer you:\n\n• ' +
-        lines.join('\n• ') + '\n\nWhich room would you like?');
+      sena('For ' + b.nights + (b.nights === 1 ? ' night' : ' nights') + ', I can offer you:\n\n• ' +
+        lines.join('\n• ') + '\n\nWhich room would you like to select?');
       chipRow(b.rooms.map(function (r) {
         return { label: r.name, go: function () {
           me(r.name);
@@ -833,18 +836,18 @@ const PAGE = `<!doctype html>
 
   var QUESTIONS = {
     full_name: {
-      q: 'May I have your full name, please?',
-      bad: 'Could you give me your full name as it appears on your ID?',
+      q: 'May I have your full name as it appears on your ID?',
+      bad: 'Could you please provide your full name exactly as it appears on your ID or passport?',
       valid: function (v) { return v.length >= 2; },
     },
     phone: {
-      q: 'Thank you. And your phone number? (for example +27 82 123 4567)',
-      bad: 'That number does not look complete — could you give it again, with the country code if possible?',
+      q: 'Thank you. Please enter your phone number (for example +27 82 123 4567).',
+      bad: 'That number does not look complete. Could you enter it again, including the country code if possible?',
       valid: function (v) { return /^[+\d][\d\s()-]{6,}$/.test(v); },
     },
     email: {
-      q: 'Your email address? Your payment link, confirmation and check-in code will go there, so letter-perfect please.',
-      bad: 'That email does not look right — could you type it again carefully?',
+      q: 'Your email address? Your payment link, confirmation, and check-in code will be sent there, so please type it carefully.',
+      bad: 'That email does not look correct. Could you type it again carefully?',
       valid: function (v) { return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v); },
     },
     nationality: {
@@ -853,7 +856,7 @@ const PAGE = `<!doctype html>
       optional: true,
     },
     special_requests: {
-      q: 'Any special requests for your stay? (early arrival, quiet room, anything at all)',
+      q: 'Do you have any special requests for your stay — for example early arrival or a quiet room?',
       valid: function () { return true; },
       optional: true,
     },
@@ -891,7 +894,7 @@ const PAGE = `<!doctype html>
   }
 
   function review() {
-    sena('Let me make sure I have everything exactly right:\n\n' +
+    sena('Let me confirm your details:\n\n' +
       'Name: ' + FLOW.full_name + '\n' +
       'Phone: ' + FLOW.phone + '\n' +
       'Email: ' + FLOW.email + '\n' +
@@ -910,7 +913,7 @@ const PAGE = `<!doctype html>
 
   function doBook() {
     me('Yes, everything is correct');
-    sena('Thank you. Booking that for you now…');
+    sena('Thank you. I am creating your booking now…');
     flowPost({
       step: 'book', check_in: FLOW.check_in, check_out: FLOW.check_out, guests: FLOW.guests,
       room_id: FLOW.room_id, full_name: FLOW.full_name, phone: FLOW.phone, email: FLOW.email,
@@ -926,27 +929,27 @@ const PAGE = `<!doctype html>
   }
 
   function payChoice(b) {
-    sena('You are booked, ' + (FLOW.full_name.split(' ')[0]) + '! Your reference is ' + b.reference +
-      ' and the total is ' + b.currency + ' ' + b.total + '.' +
-      (b.email_sent ? ' I have also emailed everything to ' + FLOW.email + '.' : '') +
+    sena('You are booked, ' + (FLOW.full_name.split(' ')[0]) + '. Your reference is ' + b.reference +
+      ' and your total is ' + b.currency + ' ' + b.total + '.' +
+      (b.email_sent ? ' I have emailed the full confirmation to you.' : '') +
       '\n\nWould you like to pay now, or pay when you arrive?');
     chipRow([
       { label: '💳 Pay now', go: function () {
         me('I will pay now');
-        sena('Opening the secure Paystack payment page for you — it takes about a minute. ' +
-          'Your room is held ' + b.hold_minutes + ' minutes for online payment.');
+        sena('Opening a secure online payment page for you now. Your room will be held for ' +
+          b.hold_minutes + ' minutes while you make payment.');
         if (b.pay_url) {
           window.open(b.pay_url, '_blank', 'noopener');
           renderActions({ pay_url: b.pay_url, check_in_code: b.check_in_code });
         }
         finishNote(b);
       } },
-      { label: '🏨 Pay when I arrive', go: function () {
-        me('I will pay when I arrive');
-        sena('Perfectly fine — you can settle at the front desk. Please download your booking ' +
-          'confirmation below: it carries your details, the terms, and your verification QR code. ' +
-          'Keep it for arrival. If you have not arrived within 48 hours of your check-in time, ' +
-          'the booking expires automatically.');
+      { label: '🏨 Pay on arrival', go: function () {
+        me('I will pay on arrival');
+        sena('You can also choose to pay on arrival at the front desk. Please download your ' +
+          'booking confirmation below. It includes your booking details, terms, and your ' +
+          'verification QR code. If you do not arrive within 48 hours of your check-in time, ' +
+          'the booking may expire automatically.');
         if (b.confirmation_url) {
           var dl = document.createElement('a');
           dl.className = 'action pay';
@@ -962,9 +965,9 @@ const PAGE = `<!doctype html>
   }
 
   function finishNote(b) {
-    sena('On arrival: enter your check-in code on our reception page (or scan the QR on your ' +
-      'confirmation at the desk), take a quick photo, and your guest ID is issued — you are ' +
-      'checked in straight away. Anything else I can help you with?');
+    sena('On arrival, please enter your check-in code on our reception page or scan the QR code ' +
+      'on your confirmation at the desk, and take a quick photo. This issues your guest ID and ' +
+      'completes your check-in securely. Is there anything else I can assist you with today?');
   }
 
   $('bookbtn').onclick = function () { me('I would like to book a room'); startBooking(); };
