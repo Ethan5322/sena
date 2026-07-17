@@ -33,7 +33,7 @@ export default async function handler(req, res) {
     const { rows } = await database().query(
       `select id, name, address, currency, check_in_time, check_out_time,
               hold_minutes, cancellation_policy, early_late_policy,
-              escalation_phone, escalation_whatsapp
+              escalation_phone, escalation_whatsapp, knowledge
          from sena_hotels
         where id = $1`,
       [hotelId]
@@ -41,6 +41,16 @@ export default async function handler(req, res) {
 
     if (!rows.length) return res.status(404).json({ error: 'unknown hotel' });
     const h = rows[0];
+
+    // The hotel's own reference document, rendered as a whole block so an empty
+    // guide leaves NO dangling heading in the prompt (the .md has one hole,
+    // {{hotel_reference}}, and this fills it). Clipped: a voice prompt the model
+    // must hold in its head every turn should not carry a novel.
+    const guide = (h.knowledge || '').trim().slice(0, 5000);
+    const hotelReference = guide
+      ? `Hotel reference — answer guest questions from this, do not go beyond it:\n"""\n${guide}\n"""`
+      : 'The hotel has not supplied a reference document yet, so if a guest asks ' +
+        'anything a tool cannot answer, say you will check with the front desk.';
 
     return res.status(200).json({
       hotel_id: h.id,
@@ -65,6 +75,8 @@ export default async function handler(req, res) {
         // she reads this out and asks the guest to WhatsApp their situation to
         // the manager directly (see system-prompt.md, Escalation).
         escalation_whatsapp: h.escalation_whatsapp,
+        // The hotel's reference document, as a ready-to-drop prompt block.
+        hotel_reference: hotelReference,
       },
       // Not a prompt variable — the agent needs it when escalate_to_human fires
       // and there is no line to transfer to.
