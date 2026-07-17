@@ -20,3 +20,5 @@ __pycache__/
 
 # portable helper binaries (cloudflared) — downloaded, never committed
 tools/
+
+.vercel
