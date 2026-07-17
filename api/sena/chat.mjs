@@ -116,19 +116,26 @@ HARD RULES — these are enforced by the tools; do not fight them:
 Start by greeting, disclosing you are an AI, and asking how you can help.`;
 }
 
+// A whole-TURN time budget. A turn can make several LLM calls (the tool loop),
+// each of which may retry a 429 — so the ceiling has to be enforced across the
+// turn, not per call, or a busy free tier stacks retries past the function's
+// own 60s limit and the guest gets a hard timeout instead of an answer.
+const TURN_BUDGET_MS = 45_000;
+
+// How long the free tier told us to wait, if it said. Gemini puts a
+// "retryDelay":"5s" in the 429 body; honouring it beats guessing.
+function retryDelayMs(body) {
+  const m = JSON.stringify(body || {}).match(/"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/);
+  return m ? Math.min(Number(m[1]) * 1000, 12_000) : 0;
+}
+
 // ── One turn against the LLM ──────────────────────────────────────────────────
-async function llm(messages, { tools = true } = {}) {
+async function llm(messages, { tools = true, deadline = Date.now() + TURN_BUDGET_MS } = {}) {
   const base = (process.env.LLM_BASE_URL || '').replace(/\/$/, '');
   const key = process.env.LLM_API_KEY;
   const model = process.env.LLM_MODEL;
   if (!base || !key || !model) return { unconfigured: true };
 
-  // The demo brain is a free tier with a PER-MINUTE request cap, and the cap
-  // is shared by every environment holding this key — a burst anywhere 429s
-  // everyone for the rest of the rolling minute. So the waits are real: long
-  // enough to cross into the next window (the function has 60s; use it). The
-  // guest sees a slow "typing…", never an apology.
-  const waits = [2000, 20000, 25000];
   for (let attempt = 0; ; attempt++) {
     let r;
     try {
@@ -138,17 +145,29 @@ async function llm(messages, { tools = true } = {}) {
         body: JSON.stringify({
           model,
           temperature: 0.3,
+          // Disable Gemini's "thinking": on 2.5 models it silently reasons
+          // before every reply and doubles the latency, for a receptionist
+          // that just needs to ask the next question. A standard OpenAI field
+          // other providers ignore.
+          reasoning_effort: 'none',
           messages,
           ...(tools ? { tools: chatTools() } : {}),
         }),
+        signal: AbortSignal.timeout(Math.max(1000, deadline - Date.now())),
       });
     } catch (err) {
-      if (attempt < waits.length) { await new Promise((s) => setTimeout(s, waits[attempt])); continue; }
+      // Timed out or network-dropped. Retry only if there is budget left.
+      if (Date.now() + 1500 < deadline) { await new Promise((s) => setTimeout(s, 1000)); continue; }
       throw err;
     }
-    if ((r.status === 429 || r.status >= 500) && attempt < waits.length) {
-      await new Promise((s) => setTimeout(s, waits[attempt]));
-      continue;
+    if (r.status === 429 || r.status >= 500) {
+      const body = await r.json().catch(() => ({}));
+      const wait = retryDelayMs(body) || Math.min(1500 * (attempt + 1), 6000);
+      if (Date.now() + wait + 1000 < deadline) {
+        await new Promise((s) => setTimeout(s, wait));
+        continue;
+      }
+      throw new Error(`llm said ${r.status}`);
     }
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j?.error?.message || `llm said ${r.status}`);
@@ -250,9 +269,10 @@ export default async function handler(req, res) {
 
     const fresh = [];
     const actions = {};
+    const deadline = Date.now() + TURN_BUDGET_MS;
 
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-      const msg = await llm(msgs);
+      const msg = await llm(msgs, { deadline });
       if (msg.unconfigured) {
         return res.status(503).json({
           ok: false,
@@ -311,7 +331,7 @@ export default async function handler(req, res) {
     if (!spoke) {
       let final;
       try {
-        final = await llm(msgs, { tools: false });
+        final = await llm(msgs, { tools: false, deadline });
       } catch {
         final = null;
       }
