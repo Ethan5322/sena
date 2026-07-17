@@ -123,7 +123,13 @@ stay. How may I assist you today?"`;
 // each of which may retry a 429 — so the ceiling has to be enforced across the
 // turn, not per call, or a busy free tier stacks retries past the function's
 // own 60s limit and the guest gets a hard timeout instead of an answer.
-const TURN_BUDGET_MS = 45_000;
+//
+// 18s, not 45: a healthy turn is 2–4s, a turn with a tool round ~8s, so this
+// leaves comfortable headroom for a REAL answer — but when the free tier is
+// hammered and every call 429s, the guest is handed the booking tree (instant,
+// no AI) in eighteen seconds, not left watching a spinner for forty-five. A
+// fast honest fallback beats a slow maybe.
+const TURN_BUDGET_MS = 18_000;
 
 // How long the free tier told us to wait, if it said. Gemini puts a
 // "retryDelay":"5s" in the 429 body; honouring it beats guessing.
