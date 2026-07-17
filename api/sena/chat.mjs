@@ -175,6 +175,93 @@ async function llm(messages, { tools = true, deadline = Date.now() + TURN_BUDGET
   }
 }
 
+// ── The guided booking flow — the tree that cannot fail ──────────────────────
+// The LLM is a free tier that rate-limits, and a booking must never die with
+// the brain (a real guest lost three turns to 429s; that is where this comes
+// from). These steps call the ROUTER directly — the same gates, holds and
+// double-confirmation the model would have used — with no model in the path.
+// Sena the conversationalist is optional; Sena the booking engine is not.
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+async function handleFlow(flow, session, router, hotelId, res) {
+  const ctx = { providerCallId: session, hotelId };
+  const step = String(flow?.step || '');
+
+  if (step === 'rooms') {
+    const { check_in, check_out } = flow;
+    const guests = Math.max(1, Math.min(8, parseInt(flow.guests, 10) || 1));
+    if (!DATE_RE.test(check_in || '') || !DATE_RE.test(check_out || '') || check_out <= check_in) {
+      return res.status(200).json({ ok: false, reason: 'Please pick a check-in date and a later check-out date.' });
+    }
+    if (check_in < new Date().toISOString().slice(0, 10)) {
+      return res.status(200).json({ ok: false, reason: 'Check-in cannot be in the past.' });
+    }
+    const avail = await router.handle('check_availability', { check_in, check_out, guests }, ctx);
+    if (!avail?.ok) return res.status(200).json({ ok: false, reason: 'Could not check availability — please try again.' });
+    return res.status(200).json({ ok: true, nights: avail.nights, rooms: avail.rooms || [] });
+  }
+
+  if (step === 'book') {
+    const { check_in, check_out, room_id } = flow;
+    const guests = Math.max(1, Math.min(8, parseInt(flow.guests, 10) || 1));
+    const name = String(flow.full_name || '').trim().slice(0, 120);
+    const phone = String(flow.phone || '').trim().slice(0, 30);
+    const email = String(flow.email || '').trim().slice(0, 200);
+    const nationality = String(flow.nationality || '').trim().slice(0, 60);
+    const requests = String(flow.special_requests || '').trim().slice(0, 500);
+    if (!DATE_RE.test(check_in || '') || !DATE_RE.test(check_out || '') || !room_id) {
+      return res.status(200).json({ ok: false, reason: 'The booking details are incomplete — please start again.' });
+    }
+    if (name.length < 2 || !/^[+\d][\d\s()-]{6,}$/.test(phone) || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      return res.status(200).json({
+        ok: false,
+        reason: 'Please give your full name, a valid phone number, and a valid email — the payment link and check-in code go to that email.',
+      });
+    }
+
+    const hold = await router.handle('hold_room', { room_id, check_in, check_out, guests_count: guests }, ctx);
+    if (!hold?.ok) {
+      return res.status(200).json({
+        ok: false,
+        reason: hold?.reason === 'room_gone'
+          ? 'That room has just been taken — please check availability again.'
+          : 'Could not hold the room — please try again.',
+        room_gone: true,
+      });
+    }
+
+    // The review card the guest just confirmed IS the double confirmation: they
+    // typed every field themselves and then approved the full block.
+    const saved = await router.handle('save_guest_details', {
+      booking_id: hold.booking_id,
+      full_name: name,
+      phone,
+      email,
+      nationality,
+      guests_count: guests,
+      special_requests: requests,
+      double_confirmed: true,
+    }, ctx);
+    if (!saved?.ok) {
+      return res.status(200).json({ ok: false, reason: 'Could not save your details — please check them and try again.' });
+    }
+
+    const pay = await router.handle('send_payment_link', { booking_id: hold.booking_id }, ctx);
+    return res.status(200).json({
+      ok: true,
+      reference: hold.reference,
+      total: hold.total,
+      currency: hold.currency,
+      hold_minutes: hold.hold_minutes,
+      pay_url: pay?.pay_url || null,
+      check_in_code: pay?.check_in_code || null,
+      email_sent: !!pay?.ok,
+    });
+  }
+
+  return res.status(400).json({ ok: false, reason: 'unknown step' });
+}
+
 // ── Repair a client-held transcript into something the LLM API will accept ───
 export function repairHistory(history) {
   const clean = [];
@@ -239,6 +326,17 @@ export default async function handler(req, res) {
   const body = req.body || {};
   const session = String(body.session || '').slice(0, 60);
   const history = Array.isArray(body.messages) ? body.messages : [];
+
+  // The guided booking tree needs a session but no transcript, and no LLM.
+  if (session && body.flow) {
+    try {
+      const { router } = getServices();
+      return await handleFlow(body.flow, session, router, process.env.SENA_DEFAULT_HOTEL_ID, res);
+    } catch (err) {
+      console.error('[sena] booking flow failed:', err);
+      return res.status(500).json({ ok: false, reason: 'Something went wrong — please try again.' });
+    }
+  }
 
   if (!session || history.length === 0 || history.length > MAX_MESSAGES) {
     return res.status(400).json({ ok: false, reason: 'bad conversation' });
@@ -351,6 +449,19 @@ export default async function handler(req, res) {
     return res.status(200).json({ ok: true, messages: fresh, actions });
   } catch (err) {
     console.error('[sena] chat failed:', err);
+    // A rate-limited brain is not a broken hotel. Answer as Sena, steer the
+    // guest into the guided booking (which uses no model at all), and keep the
+    // conversation alive instead of showing an error card.
+    if (/429|rate.?limit/i.test(String(err?.message || ''))) {
+      const busy = {
+        role: 'assistant',
+        content:
+          'I am answering a lot of guests right now, so I am a little slow — sorry about that. ' +
+          'You do not have to wait for me: tap "Book a room" below and you can complete your whole ' +
+          'booking step by step right away. Or give me a minute and ask again.',
+      };
+      return res.status(200).json({ ok: true, messages: [busy], actions: { offer_booking: true } });
+    }
     return res.status(500).json({
       ok: false,
       reason: 'Something went wrong on our side — please try again, or call reception.',
@@ -395,6 +506,29 @@ const PAGE = `<!doctype html>
   .codebox .k { font-size:.7rem; letter-spacing:.1em; text-transform:uppercase; color:var(--mut); }
   .codebox .v { font:700 1.25rem/1.3 ui-monospace,Consolas,monospace; letter-spacing:.2em; }
 
+  .quick { display:flex; gap:.5rem; padding:.45rem 1rem 0; max-width:44rem; width:100%; margin:0 auto; }
+  .chip { border:1px solid var(--accent); background:#FFF; color:var(--ink); border-radius:999px;
+          padding:.45rem .95rem; font:600 .85rem/1 system-ui,sans-serif; cursor:pointer; }
+  .chip.glow { background:var(--accent); }
+  .fcard { max-width:92%; margin:.4rem 0; padding:.9rem 1rem; border-radius:14px; background:#fff;
+           border:1px solid var(--line); }
+  .fcard h3 { margin:0 0 .6rem; font-size:.95rem; }
+  .fcard label { display:block; font-size:.72rem; letter-spacing:.06em; text-transform:uppercase;
+                 color:var(--mut); margin:.55rem 0 .2rem; }
+  .fcard input, .fcard select, .fcard textarea {
+    width:100%; padding:.6rem .7rem; border:1px solid var(--line); border-radius:10px;
+    font:inherit; font-size:.92rem; background:#fff; }
+  .fcard .row { display:flex; gap:.6rem; } .fcard .row > div { flex:1; }
+  .fbtn { margin-top:.8rem; width:100%; padding:.75rem 1rem; border:0; border-radius:999px;
+          background:var(--ink); color:#fff; font:600 .92rem/1 system-ui,sans-serif; cursor:pointer; }
+  .fbtn.gold { background:var(--accent); color:var(--ink); }
+  .fbtn:disabled { opacity:.5; }
+  .roomopt { border:1px solid var(--line); border-radius:12px; padding:.7rem .8rem; margin:.45rem 0; }
+  .roomopt b { font-size:.95rem; }
+  .roomopt .meta { color:var(--mut); font-size:.82rem; margin:.15rem 0 .5rem; }
+  .review dt { font-size:.7rem; letter-spacing:.06em; text-transform:uppercase; color:var(--mut); margin-top:.5rem; }
+  .review dd { margin:0; font-size:.93rem; }
+
   form { display:flex; gap:.55rem; padding:.8rem 1rem calc(.8rem + env(safe-area-inset-bottom));
          background:#fff; border-top:1px solid var(--line); }
   form > div { display:flex; gap:.55rem; max-width:44rem; width:100%; margin:0 auto; }
@@ -416,6 +550,10 @@ const PAGE = `<!doctype html>
 </header>
 
 <div id="thread"></div>
+
+<div class="quick">
+  <button class="chip" id="bookbtn" type="button">📅 Book a room — step by step</button>
+</div>
 
 <form id="f">
   <div>
@@ -480,6 +618,10 @@ const PAGE = `<!doctype html>
     if (a.pay_url) btn(a.pay_url, 'Pay securely with Paystack', 'pay');
     if (a.card_url) btn(a.card_url, 'Open my guest ID (save as photo or PDF)', 'link');
     if (a.confirmation_url) btn(a.confirmation_url, 'Booking confirmation (print / PDF)', 'link');
+    if (a.offer_booking) {
+      var bb = document.getElementById('bookbtn');
+      if (bb) bb.className = 'chip glow';
+    }
     scroll();
   }
 
@@ -534,6 +676,182 @@ const PAGE = `<!doctype html>
     $('box').value = '';
     send(text);
   });
+
+  // ── The guided booking tree — no AI, cannot rate-limit, cannot stall ──────
+  var FLOW = {};   // what the guest has chosen so far
+
+  function flowPost(payload, cb, btn) {
+    if (btn) btn.disabled = true;
+    fetch(location.pathname, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ session: SESSION, flow: payload }),
+    }).then(function (r) { return r.json(); }).then(function (b) {
+      if (btn) btn.disabled = false;
+      cb(b);
+    }).catch(function () {
+      if (btn) btn.disabled = false;
+      cb({ ok: false, reason: 'Could not reach the hotel system — please try again.' });
+    });
+  }
+
+  function card(title) {
+    var c = document.createElement('div');
+    c.className = 'fcard';
+    if (title) {
+      var h = document.createElement('h3');
+      h.textContent = title;
+      c.appendChild(h);
+    }
+    thread.appendChild(c);
+    scroll();
+    return c;
+  }
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text) n.textContent = text;
+    return n;
+  }
+  function labelled(parent, text, node) {
+    parent.appendChild(el('label', '', text));
+    parent.appendChild(node);
+    return node;
+  }
+  function isoPlus(days) {
+    var d = new Date(Date.now() + days * 864e5);
+    return d.toISOString().slice(0, 10);
+  }
+
+  function stepDates() {
+    var c = card('Book a room');
+    var row = el('div', 'row');
+    var d1 = el('input'); d1.type = 'date'; d1.value = FLOW.check_in || isoPlus(1); d1.min = isoPlus(0);
+    var d2 = el('input'); d2.type = 'date'; d2.value = FLOW.check_out || isoPlus(2); d2.min = isoPlus(1);
+    var g1 = el('div'); labelled(g1, 'Check-in', d1);
+    var g2 = el('div'); labelled(g2, 'Check-out', d2);
+    row.appendChild(g1); row.appendChild(g2);
+    c.appendChild(row);
+    var guests = el('select');
+    for (var i = 1; i <= 6; i++) {
+      var o = el('option', '', i + (i === 1 ? ' guest' : ' guests'));
+      o.value = i; guests.appendChild(o);
+    }
+    guests.value = FLOW.guests || 2;
+    labelled(c, 'Guests', guests);
+    var go = el('button', 'fbtn', 'See available rooms');
+    go.type = 'button';
+    go.onclick = function () {
+      FLOW.check_in = d1.value; FLOW.check_out = d2.value; FLOW.guests = guests.value;
+      flowPost({ step: 'rooms', check_in: d1.value, check_out: d2.value, guests: guests.value }, function (b) {
+        if (!b.ok) { bubble('assistant', b.reason); return; }
+        stepRooms(b);
+      }, go);
+    };
+    c.appendChild(go);
+  }
+
+  function stepRooms(b) {
+    if (!b.rooms.length) {
+      bubble('assistant', 'Nothing is free for those dates — try different dates.');
+      stepDates();
+      return;
+    }
+    var c = card(b.nights + (b.nights === 1 ? ' night — choose your room' : ' nights — choose your room'));
+    b.rooms.forEach(function (r) {
+      var o = el('div', 'roomopt');
+      o.appendChild(el('b', '', r.name + ' — ' + r.currency + ' ' + r.rate + ' / night'));
+      o.appendChild(el('div', 'meta',
+        r.plan + ' · sleeps ' + r.sleeps + ' · total ' + r.currency + ' ' + r.total +
+        (r.amenities && r.amenities.length ? ' · ' + r.amenities.join(', ') : '')));
+      var pick = el('button', 'fbtn gold', 'Choose ' + r.name);
+      pick.type = 'button';
+      pick.onclick = function () {
+        FLOW.room_id = r.room_id; FLOW.room_name = r.name; FLOW.total = r.currency + ' ' + r.total;
+        stepDetails();
+      };
+      o.appendChild(pick);
+      c.appendChild(o);
+    });
+  }
+
+  function stepDetails() {
+    var c = card('Your details — the payment link and check-in code go to your email');
+    var name = labelled(c, 'Full name', el('input'));
+    var phone = labelled(c, 'Phone (e.g. +27 82 123 4567)', el('input'));
+    var email = labelled(c, 'Email', el('input'));
+    email.type = 'email';
+    var nat = labelled(c, 'Nationality', el('input'));
+    var reqs = labelled(c, 'Special requests (optional)', el('input'));
+    name.value = FLOW.full_name || ''; phone.value = FLOW.phone || '';
+    email.value = FLOW.email || ''; nat.value = FLOW.nationality || '';
+    reqs.value = FLOW.special_requests || '';
+    var go = el('button', 'fbtn', 'Review my booking');
+    go.type = 'button';
+    go.onclick = function () {
+      FLOW.full_name = name.value.trim(); FLOW.phone = phone.value.trim();
+      FLOW.email = email.value.trim(); FLOW.nationality = nat.value.trim();
+      FLOW.special_requests = reqs.value.trim();
+      if (FLOW.full_name.length < 2 || FLOW.phone.length < 7 || FLOW.email.indexOf('@') < 1) {
+        bubble('assistant', 'I need your full name, a valid phone number and a valid email to continue.');
+        return;
+      }
+      stepReview();
+    };
+    c.appendChild(go);
+  }
+
+  function stepReview() {
+    var c = card('Is every detail correct?');
+    var dl = el('dl', 'review');
+    [['Stay', FLOW.check_in + ' → ' + FLOW.check_out + ' · ' + FLOW.guests + ' guest(s)'],
+     ['Room', FLOW.room_name + ' · ' + FLOW.total],
+     ['Name', FLOW.full_name], ['Phone', FLOW.phone], ['Email', FLOW.email],
+     ['Nationality', FLOW.nationality || '—'],
+     ['Requests', FLOW.special_requests || '—']].forEach(function (kv) {
+      dl.appendChild(el('dt', '', kv[0]));
+      dl.appendChild(el('dd', '', kv[1]));
+    });
+    c.appendChild(dl);
+    var go = el('button', 'fbtn gold', 'Confirm booking');
+    go.type = 'button';
+    go.onclick = function () {
+      flowPost({
+        step: 'book', check_in: FLOW.check_in, check_out: FLOW.check_out, guests: FLOW.guests,
+        room_id: FLOW.room_id, full_name: FLOW.full_name, phone: FLOW.phone, email: FLOW.email,
+        nationality: FLOW.nationality, special_requests: FLOW.special_requests,
+      }, function (b) {
+        if (!b.ok) {
+          bubble('assistant', b.reason);
+          if (b.room_gone) stepDates();
+          return;
+        }
+        stepDone(b);
+      }, go);
+    };
+    c.appendChild(go);
+    var back = el('button', 'fbtn', 'Change something');
+    back.type = 'button';
+    back.style.background = '#fff'; back.style.color = '#0B1220'; back.style.border = '1px solid #D6D9E0';
+    back.onclick = function () { stepDetails(); };
+    c.appendChild(back);
+  }
+
+  function stepDone(b) {
+    var c = card('Booked — reference ' + b.reference);
+    c.appendChild(el('div', '', 'Total: ' + b.currency + ' ' + b.total +
+      (b.email_sent ? '. The payment link and your check-in code are in your email.' : '.')));
+    renderActions({ pay_url: b.pay_url, check_in_code: b.check_in_code });
+    var note = el('div', 'meta');
+    note.style.color = '#6B7280'; note.style.fontSize = '.85rem'; note.style.marginTop = '.6rem';
+    note.textContent = 'Pay now to confirm instantly (the room is held ' + b.hold_minutes +
+      ' minutes for online payment) — or pay at the front desk when you arrive. ' +
+      'Your check-in code stays valid either way; if you have not arrived within 48 hours ' +
+      'of your check-in time, the booking expires automatically.';
+    c.appendChild(note);
+  }
+
+  $('bookbtn').onclick = function () { stepDates(); };
 
   // A fresh visitor should not face an empty void: Sena opens the conversation.
   if (HISTORY.length === 0) send('Hello');
