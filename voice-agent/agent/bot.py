@@ -42,6 +42,15 @@ from pipecat.adapters.schemas.function_schema import FunctionSchema
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
+
+# RNNoise cleans the guest's audio before anything downstream hears it. If the
+# wheel is ever missing (a partial rebuild), the import fails loudly here rather
+# than silently dropping noise suppression on a live call — but we still let the
+# bot run without it, because a call with noise beats no call.
+try:
+    from pipecat.audio.filters.rnnoise_filter import RNNoiseFilter
+except Exception:  # noqa: BLE001
+    RNNoiseFilter = None
 from pipecat.frames.frames import EndFrame, TTSSpeakFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
@@ -80,15 +89,15 @@ class WarmParts:
         self.settings = Settings.from_env()
         self.cfg = AgentConfig.load()
 
-        # Silero decides when the guest has stopped talking. Without a VAD,
-        # Whisper transcribes the pauses too and Sena interrupts people.
-        # Tuned DEAF-ER than default on purpose: a phone in a real room carries
-        # TV, traffic and other voices, and with default thresholds that noise
-        # counts as "the guest is speaking" — which interrupts Sena mid-greeting
-        # and reads as "she doesn't talk". Higher confidence + volume means she
-        # only stops for an actual voice actually addressing her.
+        # Silero decides when the guest has stopped talking. RNNoise now removes
+        # the room noise UPSTREAM of this (see the transport), so the VAD no
+        # longer has to be cranked deaf to survive a café — which would also
+        # miss a soft-spoken guest. These are moderate: confident enough not to
+        # trip on a stray click, sensitive enough to hear someone speaking
+        # quietly. stop_secs 0.8 lets a guest pause mid-sentence without Sena
+        # jumping in.
         self.vad = SileroVADAnalyzer(
-            params=VADParams(confidence=0.8, min_volume=0.75, start_secs=0.3, stop_secs=0.9)
+            params=VADParams(confidence=0.7, min_volume=0.6, start_secs=0.2, stop_secs=0.8)
         )
 
         # Local Whisper — the model loads HERE, at construction. 'small' is the
@@ -193,6 +202,15 @@ async def run_bot(room: str, hotel_id: str, token: str, parts: WarmParts | None 
     # ── The pipeline ────────────────────────────────────────────────────────
     # The transport is the one heavy piece that cannot be prebuilt: it carries
     # the room name and token, and those only exist once a guest calls.
+    # RNNoise runs FIRST in the input chain: it scrubs the guest's audio so the
+    # VAD and Whisper both receive a clean voice, not a voice buried in a café.
+    # This is what lets Sena hold a conversation in a noisy room the way a paid
+    # assistant does. Built once per call in parts is not possible (it holds
+    # per-stream state), so it is constructed here; it is light.
+    noise_filter = RNNoiseFilter() if RNNoiseFilter else None
+    if noise_filter is None:
+        log.warning("RNNoise unavailable — running WITHOUT noise suppression")
+
     transport = LiveKitTransport(
         url=settings.livekit_url,
         token=token,
@@ -200,6 +218,7 @@ async def run_bot(room: str, hotel_id: str, token: str, parts: WarmParts | None 
         params=LiveKitParams(
             audio_in_enabled=True,
             audio_out_enabled=True,
+            audio_in_filter=noise_filter,
             vad_analyzer=parts.vad,
         ),
     )

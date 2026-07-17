@@ -28,7 +28,12 @@
 #   openai   → any OpenAI-compatible hosted API — this is how the FREE demo
 #              brain (Groq's Llama 3.3 70B free tier) plugs in. Ollama rides
 #              the same wheels.
-pipecat-ai[livekit,whisper,silero,anthropic,openai]==1.5.0
+#   rnnoise  → RNNoise, a neural noise suppressor (Xiph). Cleans the GUEST's
+#              incoming audio — TV, traffic, a café — before Whisper or the VAD
+#              ever hear it, so Sena listens to the person, not the room. Free,
+#              CPU, real-time. This is the self-hosted answer to "why does the
+#              paid assistant hear me in noise and Sena doesn't".
+pipecat-ai[livekit,whisper,silero,anthropic,openai,rnnoise]==1.5.0
 
 # Piper — Sena's voice. Installs as a pip package with a `piper` console script,
 # so there is no binary to download and no platform-specific release to track. It
