@@ -62,6 +62,23 @@ STYLE — corporate front desk, in chat:
 - Warm, precise, never pushy. Use the guest's name once you have it.
 - You may show links and codes in chat (unlike on a call).
 
+YOU LEAD THE CONVERSATION. A receptionist walks the guest to a finished booking —
+never sit back and wait to be asked. Every reply: acknowledge in a few words, then
+take the NEXT step yourself. Never end a message without a question or an action
+that moves the booking forward. The path for a new booking, in order:
+1. Check-in and check-out dates (one question).
+2. Call check_availability, then present the available rooms WITH their nightly
+   rates and ask which one the guest would like.
+3. Guest count, then the details of rule 5 below, one at a time.
+4. The full read-back and explicit yes → save_guest_details (double_confirmed: true).
+5. send_payment_link → explain the Pay button, the hold window, and the check-in code.
+If the guest starts mid-path ("do you have a room Friday?"), pick the path up from
+that point — do not restart it.
+Dates without a year mean the NEXT such dates: state your reading inside your next
+message ("July 20–22 this year — noted.") and move on; do not stop just to re-ask.
+NEVER proceed to guest details until check_availability has confirmed the chosen
+room and dates THIS conversation — even when the guest names a room themselves.
+
 HARD RULES — these are enforced by the tools; do not fight them:
 1. Never state a price, availability or policy you did not get from a tool THIS conversation.
 2. Never guess names, dates, emails or amounts. Unclear twice → escalate_to_human.
@@ -78,20 +95,74 @@ Start by greeting, disclosing you are an AI, and asking how you can help.`;
 }
 
 // ── One turn against the LLM ──────────────────────────────────────────────────
-async function llm(messages) {
+async function llm(messages, { tools = true } = {}) {
   const base = (process.env.LLM_BASE_URL || '').replace(/\/$/, '');
   const key = process.env.LLM_API_KEY;
   const model = process.env.LLM_MODEL;
   if (!base || !key || !model) return { unconfigured: true };
 
-  const r = await fetch(`${base}/chat/completions`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model, temperature: 0.3, messages, tools: chatTools() }),
-  });
-  const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(j?.error?.message || `llm said ${r.status}`);
-  return j.choices?.[0]?.message || { role: 'assistant', content: '' };
+  // One retry on a rate limit or a transient 5xx: the demo brain is a free
+  // tier, and a single 429 must read as a beat of "typing…", not as Sena
+  // abandoning the guest mid-booking.
+  for (let attempt = 0; ; attempt++) {
+    let r;
+    try {
+      r = await fetch(`${base}/chat/completions`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model,
+          temperature: 0.3,
+          messages,
+          ...(tools ? { tools: chatTools() } : {}),
+        }),
+      });
+    } catch (err) {
+      if (attempt === 0) { await new Promise((s) => setTimeout(s, 1200)); continue; }
+      throw err;
+    }
+    if ((r.status === 429 || r.status >= 500) && attempt === 0) {
+      await new Promise((s) => setTimeout(s, 1500));
+      continue;
+    }
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j?.error?.message || `llm said ${r.status}`);
+    return j.choices?.[0]?.message || { role: 'assistant', content: '' };
+  }
+}
+
+// ── Repair a client-held transcript into something the LLM API will accept ───
+export function repairHistory(history) {
+  const clean = [];
+  const answered = (i, id) => {
+    for (let j = i + 1; j < history.length && history[j]?.role === 'tool'; j++) {
+      if (history[j].tool_call_id === id) return true;
+    }
+    return false;
+  };
+  const callIds = new Set();
+  for (let i = 0; i < history.length; i++) {
+    const m = history[i];
+    if (!m || m.role === 'system') continue;
+    if (m.role === 'tool') {
+      // An orphan tool result (its call was lost) is an API error — drop it.
+      if (m.tool_call_id && callIds.has(m.tool_call_id)) clean.push(m);
+      continue;
+    }
+    if (m.role === 'assistant' && Array.isArray(m.tool_calls) && m.tool_calls.length) {
+      // A call without its result is an API error too: keep the words, if any,
+      // and shed the dangling calls.
+      if (m.tool_calls.every((tc) => answered(i, tc.id))) {
+        m.tool_calls.forEach((tc) => callIds.add(tc.id));
+        clean.push(m);
+      } else if (typeof m.content === 'string' && m.content) {
+        clean.push({ role: 'assistant', content: m.content });
+      }
+      continue;
+    }
+    if (m.role === 'user' || m.role === 'assistant') clean.push(m);
+  }
+  return clean;
 }
 
 // ── Throttle: same honest per-instance limiter as check-in ───────────────────
@@ -142,10 +213,14 @@ export default async function handler(req, res) {
 
     // The system prompt is OURS, always — the client only ever supplies
     // user/assistant/tool turns, and anything else it claims is discarded.
+    // The transcript is also REPAIRED, not trusted: the browser stores it and
+    // replays it, and one interrupted request (a timeout, a closed tab) can
+    // leave an assistant tool_call without its tool result — which the LLM
+    // API then rejects EVERY turn after, bricking the whole conversation.
     const ctx = { providerCallId: session, hotelId };
     const msgs = [
       { role: 'system', content: systemPrompt(h[0]) },
-      ...history.filter((m) => m && m.role !== 'system'),
+      ...repairHistory(history),
     ];
 
     const fresh = [];
@@ -197,6 +272,35 @@ export default async function handler(req, res) {
         msgs.push(toolMsg);
         fresh.push(toolMsg);
       }
+    }
+
+    // A turn MUST end in words. Two ways it silently doesn't: the round budget
+    // runs out right after a tool result (the model never saw it), or the model
+    // returns an empty message. Either way the guest watches "typing…" resolve
+    // into nothing and calls the whole thing broken — ask once more, without
+    // tools so it can only answer in text, and failing that, say something
+    // honest rather than nothing.
+    const spoke = fresh.some(
+      (m) => m.role === 'assistant' && typeof m.content === 'string' && m.content.trim()
+    );
+    if (!spoke) {
+      let final;
+      try {
+        final = await llm(msgs, { tools: false });
+      } catch {
+        final = null;
+      }
+      if (!final || typeof final.content !== 'string' || !final.content.trim()) {
+        final = {
+          role: 'assistant',
+          content:
+            'Sorry — that took me a moment too long. Where were we? ' +
+            'Tell me the last thing you asked for and I will pick it right up.',
+        };
+      }
+      delete final.tool_calls;
+      msgs.push(final);
+      fresh.push(final);
     }
 
     return res.status(200).json({ ok: true, messages: fresh, actions });

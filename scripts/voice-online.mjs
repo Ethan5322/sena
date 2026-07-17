@@ -93,14 +93,46 @@ async function register(url) {
   }
 }
 
-// ── The tunnel ────────────────────────────────────────────────────────────────
-console.log(`  opening a free Cloudflare tunnel to ${SWITCHBOARD} …`);
-const tunnel = spawn(cloudflared, ['tunnel', '--url', SWITCHBOARD, '--no-autoupdate'], {
-  stdio: ['ignore', 'pipe', 'pipe'],
-});
+// ── The tunnel — self-healing ─────────────────────────────────────────────────
+// A quick tunnel can die while cloudflared keeps running: Cloudflare reaps the
+// hostname server-side and the local process never notices. It happened — the
+// heartbeat kept swearing a dead URL was fresh all night, and every guest who
+// tapped "Call Sena" was 302'd into a DNS error. So the heartbeat now proves
+// the tunnel END TO END (a GET through the public URL) before re-registering,
+// and a tunnel that stops answering is killed and replaced with a fresh one.
 
+let tunnel = null;
 let publicUrl = null;
 let beat = null;
+let misses = 0;
+let shuttingDown = false;
+
+async function tunnelAnswers() {
+  try {
+    const r = await fetch(`${publicUrl}/health`, { signal: AbortSignal.timeout(10_000) });
+    return r.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function heartbeat() {
+  if (!publicUrl) return;
+  if (await tunnelAnswers()) {
+    misses = 0;
+    await register(publicUrl);
+    return;
+  }
+  misses++;
+  console.error(`  [heartbeat] the tunnel did not answer (${misses}/2)`);
+  if (misses >= 2) {
+    console.error('  the tunnel is dead — replacing it …');
+    if (beat) clearInterval(beat);
+    beat = null;
+    await register(''); // holding page NOW, not a dead 302 for the next guest
+    try { tunnel.kill(); } catch {} // the exit handler brings up the successor
+  }
+}
 
 function onOutput(chunk) {
   const text = String(chunk);
@@ -117,24 +149,38 @@ function onOutput(chunk) {
         );
       }
     });
-    beat = setInterval(() => register(publicUrl), HEARTBEAT_MS);
+    beat = setInterval(heartbeat, HEARTBEAT_MS);
   }
 }
-tunnel.stdout.on('data', onOutput);
-tunnel.stderr.on('data', onOutput); // cloudflared prints the URL banner on stderr
+
+function startTunnel() {
+  publicUrl = null;
+  misses = 0;
+  console.log(`  opening a free Cloudflare tunnel to ${SWITCHBOARD} …`);
+  tunnel = spawn(cloudflared, ['tunnel', '--url', SWITCHBOARD, '--no-autoupdate'], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  tunnel.stdout.on('data', onOutput);
+  tunnel.stderr.on('data', onOutput); // cloudflared prints the URL banner on stderr
+  tunnel.on('exit', (code) => {
+    if (shuttingDown) return;
+    console.error(`  cloudflared exited (${code}) — a new tunnel in 15s …`);
+    if (beat) clearInterval(beat);
+    beat = null;
+    register(''); // the button falls back to the holding page meanwhile
+    setTimeout(startTunnel, 15_000);
+  });
+}
 
 async function goodbye() {
   console.log('\n  signing the voice line off …');
+  shuttingDown = true;
   if (beat) clearInterval(beat);
   await register(''); // immediate holding page, not a 15-minute ghost
-  tunnel.kill();
+  try { tunnel.kill(); } catch {}
   process.exit(0);
 }
 process.on('SIGINT', goodbye);
 process.on('SIGTERM', goodbye);
 
-tunnel.on('exit', (code) => {
-  console.error(`  cloudflared exited (${code}) — the voice line is offline.`);
-  if (beat) clearInterval(beat);
-  register('').finally(() => process.exit(code ?? 1));
-});
+startTunnel();
