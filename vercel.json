@@ -3,9 +3,6 @@
 
   "functions": {
     "api/**/*.mjs": {
-      "includeFiles": "{templates/**,assets/**,voice-agent/agent-config.json,node_modules/jsqr/dist/**,node_modules/jsbarcode/dist/**,node_modules/html2canvas/dist/**,node_modules/jspdf/dist/**}"
-    },
-    "api/sena/chat.mjs": {
       "includeFiles": "{templates/**,assets/**,voice-agent/agent-config.json,node_modules/jsqr/dist/**,node_modules/jsbarcode/dist/**,node_modules/html2canvas/dist/**,node_modules/jspdf/dist/**}",
       "maxDuration": 60
     }
