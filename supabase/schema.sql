@@ -85,6 +85,11 @@ create table if not exists sena_hotels (
 alter table sena_hotels add column if not exists voice_url            text;
 alter table sena_hotels add column if not exists voice_url_updated_at timestamptz;
 
+-- The hotel's own reference document (FAQ, amenities, directions, house rules),
+-- pasted in by the owner. Sena answers from THIS text instead of guessing —
+-- CLAUDE.md's rule that what did not come from the data, she does not know.
+alter table sena_hotels add column if not exists knowledge text;
+
 -- ── sena_rooms ───────────────────────────────────────────────────────────────────
 -- A room TYPE with an inventory count, not a single physical room. A hotel has
 -- "6 Standard Doubles", and availability is inventory minus overlapping
