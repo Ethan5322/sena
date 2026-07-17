@@ -41,6 +41,7 @@ import sys
 from pipecat.adapters.schemas.function_schema import FunctionSchema
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
 from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import EndFrame, TTSSpeakFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
@@ -81,7 +82,14 @@ class WarmParts:
 
         # Silero decides when the guest has stopped talking. Without a VAD,
         # Whisper transcribes the pauses too and Sena interrupts people.
-        self.vad = SileroVADAnalyzer()
+        # Tuned DEAF-ER than default on purpose: a phone in a real room carries
+        # TV, traffic and other voices, and with default thresholds that noise
+        # counts as "the guest is speaking" — which interrupts Sena mid-greeting
+        # and reads as "she doesn't talk". Higher confidence + volume means she
+        # only stops for an actual voice actually addressing her.
+        self.vad = SileroVADAnalyzer(
+            params=VADParams(confidence=0.8, min_volume=0.75, start_secs=0.3, stop_secs=0.9)
+        )
 
         # Local Whisper — the model loads HERE, at construction. 'small' is the
         # floor: 'base' mishears letters, and a guest spelling out an email
@@ -276,6 +284,11 @@ async def run_bot(room: str, hotel_id: str, token: str, parts: WarmParts | None 
         # model has any say in the matter.
         log.info("guest joined %s — greeting", room)
         greeted.set()
+        # The guest's browser needs a beat to attach the bot's audio track
+        # after joining. Speak instantly and the first words are lost — a real
+        # guest heard only "…calls are recorded…" and concluded Sena never
+        # greeted them at all. A short breath fixes the whole first impression.
+        await asyncio.sleep(1.5)
         await task.queue_frames([TTSSpeakFrame(greeting)])
 
     @transport.event_handler("on_participant_left")

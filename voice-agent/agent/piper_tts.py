@@ -27,9 +27,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import shutil
 from pathlib import Path
 from typing import AsyncGenerator
+
+import numpy as np
 
 from pipecat.frames.frames import (
     ErrorFrame,
@@ -59,6 +62,12 @@ log = logging.getLogger("sena.piper")
 # ~20ms of 16-bit mono at 22.05kHz. Small enough that Sena starts speaking almost
 # immediately; large enough that we are not thrashing the event loop per sample.
 CHUNK_BYTES = 1024
+
+# Piper's voices are mastered quiet, and a guest on a phone in a bright room
+# turned Sena up and still strained to hear her. A fixed digital gain (with
+# hard clipping) is the honest fix on a free stack: 1.8 is loud without
+# distorting on this voice. Tune per-voice with PIPER_GAIN; 1.0 disables.
+GAIN = float(os.environ.get("PIPER_GAIN", "1.8"))
 
 
 class PiperTTSService(TTSService):
@@ -133,6 +142,9 @@ class PiperTTSService(TTSService):
                     # guest thinks the line went dead.
                     await self.stop_ttfb_metrics()
                     first = False
+                if GAIN != 1.0:
+                    samples = np.frombuffer(chunk, dtype=np.int16).astype(np.int32)
+                    chunk = np.clip(samples * GAIN, -32768, 32767).astype(np.int16).tobytes()
                 yield TTSAudioRawFrame(
                     audio=chunk,
                     sample_rate=self._sample_rate,
