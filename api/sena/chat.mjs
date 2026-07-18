@@ -221,10 +221,12 @@ async function handleFlow(flow, session, router, hotelId, res) {
     if (!DATE_RE.test(check_in || '') || !DATE_RE.test(check_out || '') || !room_id) {
       return res.status(200).json({ ok: false, reason: 'The booking details are incomplete — please start again.' });
     }
-    if (name.length < 2 || !/^[+\d][\d\s()-]{6,}$/.test(phone) || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    // Forgiving phone check (7+ digits, any format) — matches the page, so a
+    // number the guest already confirmed on-screen is never rejected here.
+    if (name.length < 2 || phone.replace(/[^0-9]/g, '').length < 7 || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
       return res.status(200).json({
         ok: false,
-        reason: 'Please give your full name, a valid phone number, and a valid email — the payment link and check-in code go to that email.',
+        reason: 'Please give your full name, a phone number (7+ digits), and a valid email — the payment link and check-in code go to that email.',
       });
     }
 
@@ -724,7 +726,7 @@ const PAGE = `<!doctype html>
   // conversation in sessionStorage and REPLAYS it — which is why a returning
   // guest kept seeing the "old" Sena. On a version change we drop the stored
   // chat so the fresh page starts clean instead of re-showing yesterday.
-  var PAGE_VERSION = '2026-07-18b';
+  var PAGE_VERSION = '2026-07-18c';
 
   var SESSION, HISTORY;
   try {
@@ -842,6 +844,12 @@ const PAGE = `<!doctype html>
     // Mid-booking, the typed answer belongs to Sena's current question — the
     // flow — not to the language model.
     if (ASK) { answerTyped(text); return; }
+    // Typed booking intent goes straight to the reliable step-by-step tree, not
+    // the unpredictable free-text AI (which was rejecting good information and
+    // stalling). "book", "reserve", "room for", "a night" all start it.
+    if (!ASK && !FLOW.check_in && /\b(book|reserve|reservation|room for|a night|nights?|stay over)\b/i.test(text)) {
+      me(text); startBooking(); return;
+    }
     send(text);
   });
 
@@ -995,8 +1003,11 @@ const PAGE = `<!doctype html>
     },
     phone: {
       q: 'Thank you. Please enter your phone number (for example +27 82 123 4567).',
-      bad: 'That number does not look complete. Could you enter it again, including the country code if possible?',
-      valid: function (v) { return /^[+\d][\d\s()-]{6,}$/.test(v); },
+      bad: 'I could not read a full number there. Please type your phone number with its digits — spaces, +, brackets and dashes are all fine.',
+      // Forgiving on purpose: any format a real number comes in (+27 82…, 0821…,
+      // 00251…, (011) 234-5678) passes as long as it has enough digits. The old
+      // strict pattern rejected valid numbers and blocked bookings.
+      valid: function (v) { return String(v).replace(/[^0-9]/g, '').length >= 7; },
     },
     email: {
       q: 'Your email address? Your payment link, confirmation, and check-in code will be sent there, so please type it carefully.',
