@@ -110,12 +110,14 @@ tr.total td:last-child { color: var(--primary); }
   display: flex;
   gap: 1.1rem;
   align-items: center;
-  border: 1px solid var(--line);
+  border: 1.5px solid var(--accent);
   border-radius: 12px;
   padding: .9rem 1.1rem;
+  background: #FFFDF8;
 }
-.verify img { width: 84px; height: 84px; }
-.verify .num { font: 800 1.05rem 'Sora', monospace; letter-spacing: .12em; }
+.verify img { width: 96px; height: 96px; }
+.verify .k { font-size: .68rem; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.verify .num { font: 800 1.7rem 'Sora', monospace; letter-spacing: .18em; margin: .1rem 0 .15rem; }
 .verify p { font-size: .8rem; color: var(--muted); margin-top: .2rem; }
 
 /* ── Policy ── */
@@ -180,7 +182,6 @@ footer img { height: 34px; }
         <div><dt>Check-in</dt><dd>{{check_in}} from {{check_in_time}}</dd></div>
         <div><dt>Check-out</dt><dd>{{check_out}} by {{check_out_time}}</dd></div>
         <div><dt>Nights</dt><dd>{{nights}}</dd></div>
-        <div><dt>Guest ID</dt><dd>{{guest_id_number}}</dd></div>
       </dl>
     </section>
   </div>
@@ -204,9 +205,10 @@ footer img { height: 34px; }
   <section class="verify">
     <img src="{{qr_data_uri}}" alt="Check-in QR code">
     <div>
+      <div class="k">Your check-in code</div>
       <div class="num">{{verification_number}}</div>
-      <p>Booking verification number. Present this QR — on screen or on paper —
-         at the front desk. It checks in exactly once.</p>
+      <p>On arrival, type this code on the reception page — or present this QR at
+         the front desk — to check in. It works exactly once.</p>
     </div>
   </section>
 
