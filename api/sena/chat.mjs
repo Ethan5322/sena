@@ -701,6 +701,8 @@ const PAGE = `<!doctype html>
   #send:disabled { opacity:.45; }
   .footmark { text-align:center; font-size:.62rem; letter-spacing:.08em; text-transform:uppercase;
               color:var(--mut); padding:.35rem 0 .5rem; opacity:.7; }
+  .secnote { text-align:center; font-size:.7rem; color:rgba(255,255,255,.55);
+             padding:.3rem 1rem 0; max-width:44rem; margin:0 auto; }
 </style>
 </head>
 <body>
@@ -725,6 +727,8 @@ const PAGE = `<!doctype html>
 <div class="quick">
   <button class="chip" id="bookbtn" type="button">📅 Book a room — step by step</button>
 </div>
+
+<div class="secnote">🔒 Please never share card numbers in chat — you only ever pay on the secure Paystack page.</div>
 
 <form id="f">
   <div>
