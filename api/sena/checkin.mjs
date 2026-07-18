@@ -241,19 +241,34 @@ const PAGE = `<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Check in</title>
 <style>
-  :root { --ink:#0B1220; --accent:#C8A24B; --paper:#F7F5F2; --line:#E5E7EB;
-          --mut:#6B7280; --bad:#B42318; --ok:#15803D; }
+  :root { --ink:#0B1220; --ink2:#16203A; --accent:#C8A24B; --accent-2:#B0862F;
+          --gold-soft:#E7CE96; --paper:#FBF9F5; --line:#E7E0D4;
+          --mut:#7A7266; --bad:#B42318; --ok:#15803D; }
   * { box-sizing:border-box; }
-  body { margin:0; min-height:100dvh; background:var(--paper); color:var(--ink);
+  body { margin:0; min-height:100dvh; color:var(--ink);
          font:16px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif;
-         display:grid; place-items:start center; }
-  main { width:min(28rem,94vw); padding:2.5rem 1.25rem 3rem; text-align:center; }
-  h1 { font-size:1.5rem; margin:0 0 .3rem; letter-spacing:-.01em; }
-  .sub { color:var(--mut); margin:0 0 2rem; font-size:.95rem; }
+         display:grid; place-items:start center;
+         background:
+           radial-gradient(135% 60% at 50% -12%, rgba(200,162,75,.13), transparent 55%),
+           linear-gradient(180deg,#FBF9F5 0%, #F2ECE1 55%, #ECE4D6 100%); }
+  body::before { content:''; position:fixed; inset:0; z-index:-1; pointer-events:none;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='46' height='46'%3E%3Cpath d='M23 1 L45 23 L23 45 L1 23 Z' fill='none' stroke='%23C8A24B' stroke-width='0.6'/%3E%3C/svg%3E");
+    background-size:46px 46px; opacity:.05; }
+  main { width:min(28rem,94vw); padding:1.5rem 1.25rem 3rem; text-align:center; }
+
+  .brand { display:flex; align-items:center; justify-content:center; gap:.7rem; margin:.4rem 0 1.8rem; }
+  .crest { width:38px; height:38px; border-radius:50%; flex:none; display:grid; place-items:center;
+           background:radial-gradient(circle at 32% 26%, var(--gold-soft), var(--accent) 55%, var(--accent-2));
+           box-shadow:0 2px 8px rgba(0,0,0,.22), inset 0 0 0 1px rgba(255,255,255,.4); }
+  .brand .bname { font:600 1.06rem/1.1 Georgia,"Times New Roman",serif; }
+  .brand .btag { font-size:.68rem; letter-spacing:.08em; text-transform:uppercase; color:var(--mut); }
+
+  h1 { font:600 1.5rem/1.15 Georgia,"Times New Roman",serif; margin:0 0 .3rem; letter-spacing:-.005em; }
+  .sub { color:var(--mut); margin:0 0 1.6rem; font-size:.95rem; }
   .hide { display:none !important; }
 
   .card { background:#fff; border:1px solid var(--line); border-radius:16px;
-          padding:1.4rem 1.25rem; text-align:left; box-shadow:0 10px 30px -20px #0B122033; }
+          padding:1.4rem 1.25rem; text-align:left; box-shadow:0 12px 34px -22px rgba(11,18,32,.4); }
 
   input.code { width:100%; padding:.9rem 1rem; border:1px solid var(--line); border-radius:12px;
                font:600 1.25rem/1.2 ui-monospace,Consolas,monospace; letter-spacing:.35em;
@@ -261,13 +276,13 @@ const PAGE = `<!doctype html>
   input.code:focus { outline:2px solid var(--accent); border-color:var(--accent); }
 
   button, .btn { width:100%; padding:1rem 1.25rem; border:0; border-radius:999px;
-    background:var(--ink); color:#fff; font:600 1.02rem/1.2 inherit; font-family:inherit;
+    background:linear-gradient(180deg,var(--ink),var(--ink2)); color:#fff; font:600 1.02rem/1.2 inherit; font-family:inherit;
     cursor:pointer; display:block; text-align:center; text-decoration:none;
     transition:transform .08s ease,opacity .2s ease; margin-top:.8rem; }
   button:hover:not(:disabled), .btn:hover { transform:translateY(-1px); }
   button:disabled { opacity:.45; cursor:not-allowed; }
   .ghost { background:#fff; color:var(--ink); border:1px solid var(--line); }
-  .gold  { background:var(--accent); color:var(--ink); }
+  .gold  { background:linear-gradient(180deg,var(--gold-soft),var(--accent)); color:var(--ink); }
 
   .status { margin-top:1.1rem; min-height:1.4rem; font-size:.9rem; color:var(--mut); }
   .status[data-error="true"] { color:var(--bad); font-weight:600; }
@@ -298,6 +313,20 @@ const PAGE = `<!doctype html>
 </head>
 <body>
 <main>
+  <div class="brand">
+    <div class="crest" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#0B1220"
+           stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M5 17.5h14"/><path d="M6.5 17.5a5.5 5.5 0 0 1 11 0"/>
+        <path d="M12 6.4V5"/><circle cx="12" cy="3.8" r="1.05" fill="#0B1220" stroke="none"/>
+      </svg>
+    </div>
+    <div>
+      <div class="bname">Jacaranda Court Hotel</div>
+      <div class="btag">Reception · Self check-in</div>
+    </div>
+  </div>
+
   <!-- Step 1 · the code -->
   <section id="s-code">
     <h1>Check in</h1>
