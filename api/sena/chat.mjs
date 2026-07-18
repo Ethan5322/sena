@@ -605,9 +605,14 @@ const PAGE = `<!doctype html>
            radial-gradient(135% 70% at 50% -12%, rgba(200,162,75,.13), transparent 55%),
            linear-gradient(180deg,#FBF9F5 0%, #F2ECE1 55%, #ECE4D6 100%); }
   /* a faint gold diamond lattice — the hotel's wallpaper, not a plain white void */
-  body::before { content:''; position:fixed; inset:0; z-index:-1; pointer-events:none;
+  body::before { content:''; position:fixed; inset:0; z-index:-2; pointer-events:none;
     background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='46' height='46'%3E%3Cpath d='M23 1 L45 23 L23 45 L1 23 Z' fill='none' stroke='%23C8A24B' stroke-width='0.6'/%3E%3C/svg%3E");
     background-size:46px 46px; opacity:.05; }
+  /* the hotel itself, as a faint crest watermark — a grand facade behind the
+     conversation, so the chat plainly belongs to a hotel */
+  body::after { content:''; position:fixed; left:50%; bottom:8%; transform:translateX(-50%);
+    width:min(74vw,320px); height:min(74vw,320px); z-index:-1; pointer-events:none; opacity:.06;
+    background:center/contain no-repeat url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 200' fill='none' stroke='%230B1220' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M120 14 v18'/%3E%3Cpath d='M120 16 h20 l-5 6 l5 6 h-20'/%3E%3Cpath d='M28 92 L120 40 L212 92'/%3E%3Crect x='44' y='92' width='152' height='92'/%3E%3Cline x1='66' y1='92' x2='66' y2='184'/%3E%3Cline x1='94' y1='92' x2='94' y2='184'/%3E%3Cline x1='146' y1='92' x2='146' y2='184'/%3E%3Cline x1='174' y1='92' x2='174' y2='184'/%3E%3Cpath d='M106 184 v-30 a14 14 0 0 1 28 0 v30'/%3E%3Cline x1='30' y1='184' x2='210' y2='184'/%3E%3C/svg%3E"); }
 
   header { padding:.85rem 1.1rem; display:flex; align-items:center; gap:.8rem;
            background:linear-gradient(180deg,var(--ink),var(--ink2));
@@ -719,7 +724,7 @@ const PAGE = `<!doctype html>
   // conversation in sessionStorage and REPLAYS it — which is why a returning
   // guest kept seeing the "old" Sena. On a version change we drop the stored
   // chat so the fresh page starts clean instead of re-showing yesterday.
-  var PAGE_VERSION = '2026-07-18a';
+  var PAGE_VERSION = '2026-07-18b';
 
   var SESSION, HISTORY;
   try {
@@ -818,9 +823,11 @@ const PAGE = `<!doctype html>
       });
       saveHistory();
       renderActions(b.actions);
+      reoffer();
     }).catch(function () {
       t.remove();
-      bubble('assistant', 'I could not reach the hotel system — please try again.');
+      bubble('assistant', 'I could not reach the hotel system just now — but I can still book you a room right away.');
+      reoffer();
     }).finally(function () {
       busy = false;
       $('send').disabled = false;
@@ -966,8 +973,8 @@ const PAGE = `<!doctype html>
         return r.name + ' (' + r.plan + ', sleeps ' + r.sleeps + ') — ' + r.currency + ' ' + r.rate +
           ' per night, ' + r.currency + ' ' + r.total + ' for the stay';
       });
-      sena('For ' + b.nights + (b.nights === 1 ? ' night' : ' nights') + ', I can offer you:\n\n• ' +
-        lines.join('\n• ') + '\n\nWhich room would you like to select?');
+      sena('For ' + b.nights + (b.nights === 1 ? ' night' : ' nights') + ', I can offer you:\\n\\n• ' +
+        lines.join('\\n• ') + '\\n\\nWhich room would you like to select?');
       chipRow(b.rooms.map(function (r) {
         return { label: r.name, go: function () {
           me(r.name);
@@ -1040,15 +1047,15 @@ const PAGE = `<!doctype html>
   }
 
   function review() {
-    sena('Let me confirm your details:\n\n' +
-      'Name: ' + FLOW.full_name + '\n' +
-      'Phone: ' + FLOW.phone + '\n' +
-      'Email: ' + FLOW.email + '\n' +
-      'Nationality: ' + (FLOW.nationality || '—') + '\n' +
-      'Requests: ' + (FLOW.special_requests || '—') + '\n' +
+    sena('Let me confirm your details:\\n\\n' +
+      'Name: ' + FLOW.full_name + '\\n' +
+      'Phone: ' + FLOW.phone + '\\n' +
+      'Email: ' + FLOW.email + '\\n' +
+      'Nationality: ' + (FLOW.nationality || '—') + '\\n' +
+      'Requests: ' + (FLOW.special_requests || '—') + '\\n' +
       'Stay: ' + prettyDate(FLOW.check_in) + ' to ' + prettyDate(FLOW.check_out) +
-      ' · ' + FLOW.guests + ' guest(s)\n' +
-      'Room: ' + FLOW.room_name + ' — total ' + FLOW.total_text + '\n\n' +
+      ' · ' + FLOW.guests + ' guest(s)\\n' +
+      'Room: ' + FLOW.room_name + ' — total ' + FLOW.total_text + '\\n\\n' +
       'Is every detail correct?');
     chipRow([
       { label: '✓ Yes, everything is correct', go: doBook },
@@ -1078,7 +1085,7 @@ const PAGE = `<!doctype html>
     sena('You are booked, ' + (FLOW.full_name.split(' ')[0]) + '. Your reference is ' + b.reference +
       ' and your total is ' + b.currency + ' ' + b.total + '.' +
       (b.email_sent ? ' I have emailed the full confirmation to you.' : '') +
-      '\n\nWould you like to pay now, or pay when you arrive?');
+      '\\n\\nWould you like to pay now, or pay when you arrive?');
     chipRow([
       { label: '💳 Pay now', go: function () {
         me('I will pay now');
@@ -1118,8 +1125,53 @@ const PAGE = `<!doctype html>
 
   $('bookbtn').onclick = function () { me('I would like to book a room'); startBooking(); };
 
-  // A fresh visitor should not face an empty void: Sena opens the conversation.
-  if (HISTORY.length === 0) send('Hello');
+  // ── Sena opens the conversation HERSELF, instantly, with NO AI ────────────
+  // The greeting and the guided booking are scripted and deterministic. They
+  // never wait on the rate-limited brain, never stall, never leave the guest
+  // typing into a void. The AI is a bonus for free-text questions only — the
+  // conversation itself cannot break.
+  function timeOfDay() {
+    var h = new Date().getHours();
+    return h < 12 ? 'morning' : (h < 17 ? 'afternoon' : 'evening');
+  }
+
+  function offerHelp() {
+    chipRow([
+      { label: '📅 Book a room', go: function () { me('I would like to book a room'); startBooking(); } },
+      { label: '🛎  Ask a question', go: function () {
+        me('I have a question');
+        sena('Of course. What would you like to know? You can ask about breakfast, parking, ' +
+             'Wi-Fi, check-in times, our location — anything about your stay.');
+        $('box').focus();
+      } },
+    ]);
+  }
+
+  function greet() {
+    var g1 = 'Good ' + timeOfDay() + ', and a very warm welcome to Jacaranda Court Hotel.';
+    var g2 = "My name is Sena, the hotel's AI receptionist. I can book you a room in a few quick " +
+             'steps, or answer any question about your stay.';
+    var g3 = 'How may I help you today?';
+    sena(g1); sena(g2); sena(g3);
+    // Seed the transcript so that IF the guest later types a free question, the
+    // brain knows it has already greeted and simply continues.
+    HISTORY.push({ role: 'assistant', content: g1 + ' ' + g2 + ' ' + g3 });
+    saveHistory();
+    offerHelp();
+  }
+
+  // After Sena answers a typed question, keep the conversation moving instead of
+  // going quiet — re-offer the two ways forward.
+  function reoffer() {
+    if (ASK) return;                 // mid-booking: the flow is already leading
+    chipRow([
+      { label: '📅 Book a room', go: function () { me('I would like to book a room'); startBooking(); } },
+      { label: '🛎  Ask another', go: function () { me('I have another question'); sena('Certainly — what else can I help you with?'); $('box').focus(); } },
+    ]);
+  }
+
+  if (HISTORY.length === 0) greet();
+  else $('box').focus();
 })();
 </script>
 </body>
