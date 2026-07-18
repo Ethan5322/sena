@@ -592,76 +592,107 @@ const PAGE = `<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Chat with Sena</title>
 <style>
-  :root { --ink:#0B1220; --accent:#C8A24B; --paper:#F7F5F2; --line:#E5E7EB; --mut:#6B7280; }
+  :root { --ink:#0B1220; --ink2:#16203A; --accent:#C8A24B; --accent-2:#B0862F;
+          --gold-soft:#E7CE96; --paper:#FBF9F5; --line:#E7E0D4; --mut:#7A7266;
+          --sena:#FFFFFF; }
   * { box-sizing:border-box; }
+  html, body { height:100%; }
   body { margin:0; min-height:100dvh; display:flex; flex-direction:column;
-         background:var(--paper); color:var(--ink);
-         font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
-  header { padding:.9rem 1.1rem; background:#fff; border-bottom:1px solid var(--line);
-           display:flex; align-items:center; gap:.7rem; }
-  .dot { width:34px; height:34px; border-radius:50%; background:var(--accent); flex:none; }
-  header h1 { font-size:1.02rem; margin:0; }
-  header p { font-size:.75rem; color:var(--mut); margin:0; }
+         color:var(--ink);
+         font:16px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif;
+         /* warm lobby light over a soft cream gradient */
+         background:
+           radial-gradient(135% 70% at 50% -12%, rgba(200,162,75,.13), transparent 55%),
+           linear-gradient(180deg,#FBF9F5 0%, #F2ECE1 55%, #ECE4D6 100%); }
+  /* a faint gold diamond lattice — the hotel's wallpaper, not a plain white void */
+  body::before { content:''; position:fixed; inset:0; z-index:-1; pointer-events:none;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='46' height='46'%3E%3Cpath d='M23 1 L45 23 L23 45 L1 23 Z' fill='none' stroke='%23C8A24B' stroke-width='0.6'/%3E%3C/svg%3E");
+    background-size:46px 46px; opacity:.05; }
 
-  #thread { flex:1; overflow-y:auto; padding:1rem; max-width:44rem; width:100%; margin:0 auto; }
-  .msg { max-width:85%; padding:.65rem .9rem; border-radius:16px; margin:.3rem 0;
-         white-space:pre-wrap; word-wrap:break-word; font-size:.95rem; }
-  .msg.sena { background:#fff; border:1px solid var(--line); border-bottom-left-radius:6px; }
-  .msg.me   { background:var(--ink); color:#fff; margin-left:auto; border-bottom-right-radius:6px; }
-  .typing { color:var(--mut); font-size:.85rem; padding:.4rem .2rem; }
+  header { padding:.85rem 1.1rem; display:flex; align-items:center; gap:.8rem;
+           background:linear-gradient(180deg,var(--ink),var(--ink2));
+           border-bottom:2px solid var(--accent);
+           box-shadow:0 2px 16px rgba(11,18,32,.20); }
+  .crest { width:40px; height:40px; border-radius:50%; flex:none; display:grid; place-items:center;
+           background:radial-gradient(circle at 32% 26%, var(--gold-soft), var(--accent) 55%, var(--accent-2));
+           box-shadow:0 2px 8px rgba(0,0,0,.28), inset 0 0 0 1px rgba(255,255,255,.4); }
+  .htxt h1 { margin:0; font:600 1.14rem/1.15 Georgia,"Times New Roman",serif; color:#fff; letter-spacing:.01em; }
+  .htxt p { margin:.12rem 0 0; font-size:.71rem; letter-spacing:.04em; text-transform:uppercase; color:rgba(255,255,255,.6); }
 
-  .action { display:block; max-width:85%; margin:.35rem 0; padding:.8rem 1rem; border-radius:14px;
-            text-decoration:none; text-align:center; font-weight:600; font-size:.95rem; }
-  .action.pay  { background:var(--accent); color:var(--ink); }
-  .action.link { background:#fff; color:var(--ink); border:1px solid #D6D9E0; }
-  .codebox { max-width:85%; margin:.35rem 0; padding:.8rem 1rem; border-radius:14px;
-             background:#F3F4F6; border:1px dashed #C8A24B; text-align:center; }
-  .codebox .k { font-size:.7rem; letter-spacing:.1em; text-transform:uppercase; color:var(--mut); }
-  .codebox .v { font:700 1.25rem/1.3 ui-monospace,Consolas,monospace; letter-spacing:.2em; }
+  #thread { flex:1; overflow-y:auto; padding:1.1rem 1rem; max-width:44rem; width:100%; margin:0 auto; }
+  .msg { max-width:82%; padding:.7rem .95rem; border-radius:16px; margin:.4rem 0;
+         white-space:pre-wrap; word-wrap:break-word; font-size:.95rem;
+         box-shadow:0 1px 3px rgba(11,18,32,.07); }
+  .msg.sena { background:var(--sena); border:1px solid var(--line); border-left:3px solid var(--accent);
+              border-bottom-left-radius:6px; }
+  .msg.me   { color:#fff; margin-left:auto; border-bottom-right-radius:6px;
+              background:linear-gradient(180deg,var(--ink),var(--ink2)); }
+  .typing { color:var(--mut); font-size:.85rem; padding:.4rem .4rem; font-style:italic; }
 
-  .quick { display:flex; gap:.5rem; padding:.45rem 1rem 0; max-width:44rem; width:100%; margin:0 auto; }
-  .chip { border:1px solid var(--accent); background:#FFF; color:var(--ink); border-radius:999px;
-          padding:.45rem .95rem; font:600 .85rem/1 system-ui,sans-serif; cursor:pointer; }
-  .chip.glow { background:var(--accent); }
-  .chiprow { display:flex; flex-wrap:wrap; gap:.45rem; margin:.35rem 0 .5rem; }
-  .inline-date { padding:.45rem .7rem; border:1px solid var(--line); border-radius:999px;
+  .action { display:block; max-width:82%; margin:.4rem 0; padding:.85rem 1rem; border-radius:14px;
+            text-decoration:none; text-align:center; font-weight:600; font-size:.95rem;
+            box-shadow:0 2px 8px rgba(11,18,32,.10); }
+  .action.pay  { background:linear-gradient(180deg,var(--gold-soft),var(--accent)); color:var(--ink); }
+  .action.link { background:#fff; color:var(--ink); border:1px solid #DDD3C1; }
+  .codebox { max-width:82%; margin:.4rem 0; padding:.85rem 1rem; border-radius:14px;
+             background:#FFFDF8; border:1px dashed var(--accent); text-align:center;
+             box-shadow:0 1px 3px rgba(11,18,32,.06); }
+  .codebox .k { font-size:.68rem; letter-spacing:.12em; text-transform:uppercase; color:var(--mut); }
+  .codebox .v { font:700 1.3rem/1.3 ui-monospace,Consolas,monospace; letter-spacing:.22em; color:var(--ink); }
+
+  .quick { display:flex; gap:.5rem; padding:.5rem 1rem 0; max-width:44rem; width:100%; margin:0 auto; }
+  .chip { border:1px solid var(--accent); background:rgba(255,255,255,.85); color:var(--ink); border-radius:999px;
+          padding:.5rem 1rem; font:600 .85rem/1 system-ui,sans-serif; cursor:pointer;
+          box-shadow:0 1px 3px rgba(11,18,32,.08); transition:transform .06s ease, background .15s ease; }
+  .chip:hover { background:#fff; }
+  .chip:active { transform:translateY(1px); }
+  .chip.glow { background:linear-gradient(180deg,var(--gold-soft),var(--accent)); border-color:var(--accent-2); }
+  .chiprow { display:flex; flex-wrap:wrap; gap:.45rem; margin:.4rem 0 .55rem; }
+  .inline-date { padding:.5rem .75rem; border:1px solid var(--line); border-radius:999px;
                  font:inherit; font-size:.88rem; background:#fff; }
-  .fcard { max-width:92%; margin:.4rem 0; padding:.9rem 1rem; border-radius:14px; background:#fff;
-           border:1px solid var(--line); }
-  .fcard h3 { margin:0 0 .6rem; font-size:.95rem; }
-  .fcard label { display:block; font-size:.72rem; letter-spacing:.06em; text-transform:uppercase;
-                 color:var(--mut); margin:.55rem 0 .2rem; }
-  .fcard input, .fcard select, .fcard textarea {
-    width:100%; padding:.6rem .7rem; border:1px solid var(--line); border-radius:10px;
-    font:inherit; font-size:.92rem; background:#fff; }
-  .fcard .row { display:flex; gap:.6rem; } .fcard .row > div { flex:1; }
-  .fbtn { margin-top:.8rem; width:100%; padding:.75rem 1rem; border:0; border-radius:999px;
-          background:var(--ink); color:#fff; font:600 .92rem/1 system-ui,sans-serif; cursor:pointer; }
-  .fbtn.gold { background:var(--accent); color:var(--ink); }
-  .fbtn:disabled { opacity:.5; }
-  .roomopt { border:1px solid var(--line); border-radius:12px; padding:.7rem .8rem; margin:.45rem 0; }
-  .roomopt b { font-size:.95rem; }
+  .fcard { max-width:92%; margin:.4rem 0; padding:.95rem 1.05rem; border-radius:16px; background:#fff;
+           border:1px solid var(--line); box-shadow:0 2px 10px rgba(11,18,32,.07); }
+  .fcard h3 { margin:0 0 .6rem; font:600 1rem/1.2 Georgia,serif; }
+  .roomopt { border:1px solid var(--line); border-radius:14px; padding:.75rem .85rem; margin:.45rem 0;
+             background:#fff; box-shadow:0 1px 4px rgba(11,18,32,.06); }
+  .roomopt b { font-size:.96rem; }
   .roomopt .meta { color:var(--mut); font-size:.82rem; margin:.15rem 0 .5rem; }
-  .review dt { font-size:.7rem; letter-spacing:.06em; text-transform:uppercase; color:var(--mut); margin-top:.5rem; }
-  .review dd { margin:0; font-size:.93rem; }
+  .fbtn { margin-top:.8rem; width:100%; padding:.8rem 1rem; border:0; border-radius:999px;
+          background:linear-gradient(180deg,var(--ink),var(--ink2)); color:#fff;
+          font:600 .92rem/1 system-ui,sans-serif; cursor:pointer; }
+  .fbtn.gold { background:linear-gradient(180deg,var(--gold-soft),var(--accent)); color:var(--ink); }
+  .fbtn:disabled { opacity:.5; }
 
-  form { display:flex; gap:.55rem; padding:.8rem 1rem calc(.8rem + env(safe-area-inset-bottom));
-         background:#fff; border-top:1px solid var(--line); }
+  form { display:flex; gap:.55rem;
+         padding:.75rem 1rem calc(.75rem + env(safe-area-inset-bottom));
+         background:rgba(255,255,255,.78); backdrop-filter:blur(10px);
+         border-top:1px solid var(--line); }
   form > div { display:flex; gap:.55rem; max-width:44rem; width:100%; margin:0 auto; }
-  input { flex:1; padding:.8rem 1rem; border:1px solid var(--line); border-radius:999px;
-          font:inherit; font-size:.95rem; }
-  input:focus { outline:2px solid var(--accent); border-color:var(--accent); }
-  button { padding:.8rem 1.3rem; border:0; border-radius:999px; background:var(--ink);
-           color:#fff; font:600 .95rem/1 inherit; font-family:inherit; cursor:pointer; }
-  button:disabled { opacity:.45; }
+  #box { flex:1; padding:.8rem 1.05rem; border:1px solid var(--line); border-radius:999px;
+          font:inherit; font-size:.95rem; background:#fff; }
+  #box:focus { outline:2px solid var(--accent); border-color:var(--accent); }
+  #send { padding:.8rem 1.35rem; border:0; border-radius:999px; cursor:pointer;
+          background:linear-gradient(180deg,var(--ink),var(--ink2)); color:#fff;
+          font:600 .95rem/1 system-ui,sans-serif; }
+  #send:disabled { opacity:.45; }
+  .footmark { text-align:center; font-size:.62rem; letter-spacing:.08em; text-transform:uppercase;
+              color:var(--mut); padding:.35rem 0 .5rem; opacity:.7; }
 </style>
 </head>
 <body>
 <header>
-  <div class="dot"></div>
-  <div>
-    <h1>Sena — Reception</h1>
-    <p>AI assistant · replies in seconds · never share card numbers in chat</p>
+  <div class="crest" aria-hidden="true">
+    <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="#0B1220"
+         stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M5 17.5h14"/>
+      <path d="M6.5 17.5a5.5 5.5 0 0 1 11 0"/>
+      <path d="M12 6.4V5"/>
+      <circle cx="12" cy="3.8" r="1.05" fill="#0B1220" stroke="none"/>
+    </svg>
+  </div>
+  <div class="htxt">
+    <h1>Jacaranda Court Hotel</h1>
+    <p>Reception · Sena, your AI concierge</p>
   </div>
 </header>
 
@@ -684,8 +715,19 @@ const PAGE = `<!doctype html>
   var $ = function (id) { return document.getElementById(id); };
   var thread = $('thread');
 
+  // Bump this whenever the page/flow changes. An old tab keeps its saved
+  // conversation in sessionStorage and REPLAYS it — which is why a returning
+  // guest kept seeing the "old" Sena. On a version change we drop the stored
+  // chat so the fresh page starts clean instead of re-showing yesterday.
+  var PAGE_VERSION = '2026-07-18a';
+
   var SESSION, HISTORY;
   try {
+    if (localStorage.getItem('sena_chat_ver') !== PAGE_VERSION) {
+      sessionStorage.removeItem('sena_chat_history');
+      sessionStorage.removeItem('sena_chat_session');
+      localStorage.setItem('sena_chat_ver', PAGE_VERSION);
+    }
     SESSION = sessionStorage.getItem('sena_chat_session');
     HISTORY = JSON.parse(sessionStorage.getItem('sena_chat_history') || 'null');
   } catch (e) {}
