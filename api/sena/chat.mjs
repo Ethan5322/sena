@@ -31,6 +31,22 @@ import { getServices } from '../../src/services.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
+// The chat background — the hotel's own guest-ID card (name masked), read once
+// and injected as a data URI. Full-screen and dimmed dark on the page, so it
+// reads as a corporate hotel backdrop, not a distraction. ~19KB.
+let cachedBg = null;
+function chatBackground() {
+  if (cachedBg !== null) return cachedBg;
+  try {
+    cachedBg =
+      'data:image/jpeg;base64,' +
+      fs.readFileSync(path.join(ROOT, 'assets', 'brand', 'chat-bg.jpg')).toString('base64');
+  } catch {
+    cachedBg = ''; // no asset → the page falls back to its dark colour
+  }
+  return cachedBg;
+}
+
 const MAX_MESSAGES = 60; // a booking chat runs ~20; 60 is a stuck loop, not a guest
 const MAX_CHARS = 2000;
 const MAX_TOOL_ROUNDS = 6;
@@ -407,7 +423,7 @@ export default async function handler(req, res) {
 
   if (req.method === 'GET') {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    return res.status(200).send(PAGE);
+    return res.status(200).send(PAGE.replace('__CHAT_BG__', chatBackground()));
   }
   if (req.method !== 'POST') return res.status(405).json({ ok: false, reason: 'method' });
   if (throttled(req)) {
@@ -600,21 +616,16 @@ const PAGE = `<!doctype html>
   * { box-sizing:border-box; }
   html, body { height:100%; }
   body { margin:0; min-height:100dvh; display:flex; flex-direction:column;
-         color:var(--ink);
-         font:16px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif;
-         /* warm lobby light over a soft cream gradient */
-         background:
-           radial-gradient(135% 70% at 50% -12%, rgba(200,162,75,.13), transparent 55%),
-           linear-gradient(180deg,#FBF9F5 0%, #F2ECE1 55%, #ECE4D6 100%); }
-  /* a faint gold diamond lattice — the hotel's wallpaper, not a plain white void */
+         color:#F3EFE7; background:#0B1020;
+         font:16px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif; }
+  /* The hotel's own guest-ID card (guest name masked), full-screen and zoomed —
+     the corporate backdrop the owner asked for. */
   body::before { content:''; position:fixed; inset:0; z-index:-2; pointer-events:none;
-    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='46' height='46'%3E%3Cpath d='M23 1 L45 23 L23 45 L1 23 Z' fill='none' stroke='%23C8A24B' stroke-width='0.6'/%3E%3C/svg%3E");
-    background-size:46px 46px; opacity:.05; }
-  /* the hotel itself, as a faint crest watermark — a grand facade behind the
-     conversation, so the chat plainly belongs to a hotel */
-  body::after { content:''; position:fixed; left:50%; bottom:8%; transform:translateX(-50%);
-    width:min(74vw,320px); height:min(74vw,320px); z-index:-1; pointer-events:none; opacity:.06;
-    background:center/contain no-repeat url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 200' fill='none' stroke='%230B1220' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M120 14 v18'/%3E%3Cpath d='M120 16 h20 l-5 6 l5 6 h-20'/%3E%3Cpath d='M28 92 L120 40 L212 92'/%3E%3Crect x='44' y='92' width='152' height='92'/%3E%3Cline x1='66' y1='92' x2='66' y2='184'/%3E%3Cline x1='94' y1='92' x2='94' y2='184'/%3E%3Cline x1='146' y1='92' x2='146' y2='184'/%3E%3Cline x1='174' y1='92' x2='174' y2='184'/%3E%3Cpath d='M106 184 v-30 a14 14 0 0 1 28 0 v30'/%3E%3Cline x1='30' y1='184' x2='210' y2='184'/%3E%3C/svg%3E"); }
+    background:#0B1020 center/cover no-repeat fixed url("__CHAT_BG__"); }
+  /* Dimmed dark so it never competes with the conversation: a little dark, not
+     bright, no distraction. */
+  body::after { content:''; position:fixed; inset:0; z-index:-1; pointer-events:none;
+    background:linear-gradient(180deg, rgba(9,13,26,.87) 0%, rgba(9,13,26,.91) 55%, rgba(9,13,26,.95) 100%); }
 
   header { padding:.85rem 1.1rem; display:flex; align-items:center; gap:.8rem;
            background:linear-gradient(180deg,var(--ink),var(--ink2));
@@ -629,12 +640,14 @@ const PAGE = `<!doctype html>
   #thread { flex:1; overflow-y:auto; padding:1.1rem 1rem; max-width:44rem; width:100%; margin:0 auto; }
   .msg { max-width:82%; padding:.7rem .95rem; border-radius:16px; margin:.4rem 0;
          white-space:pre-wrap; word-wrap:break-word; font-size:.95rem;
-         box-shadow:0 1px 3px rgba(11,18,32,.07); }
-  .msg.sena { background:var(--sena); border:1px solid var(--line); border-left:3px solid var(--accent);
+         box-shadow:0 6px 18px -8px rgba(0,0,0,.6); }
+  /* On the dark card backdrop: Sena speaks in warm white, the guest in gold —
+     both read clearly, neither vanishes into the background. */
+  .msg.sena { background:var(--sena); color:var(--ink); border-left:3px solid var(--accent);
               border-bottom-left-radius:6px; }
-  .msg.me   { color:#fff; margin-left:auto; border-bottom-right-radius:6px;
-              background:linear-gradient(180deg,var(--ink),var(--ink2)); }
-  .typing { color:var(--mut); font-size:.85rem; padding:.4rem .4rem; font-style:italic; }
+  .msg.me   { color:var(--ink); margin-left:auto; border-bottom-right-radius:6px;
+              background:linear-gradient(180deg,var(--gold-soft),var(--accent)); }
+  .typing { color:rgba(255,255,255,.62); font-size:.85rem; padding:.4rem .4rem; font-style:italic; }
 
   .action { display:block; max-width:82%; margin:.4rem 0; padding:.85rem 1rem; border-radius:14px;
             text-decoration:none; text-align:center; font-weight:600; font-size:.95rem;
@@ -672,11 +685,11 @@ const PAGE = `<!doctype html>
 
   form { display:flex; gap:.55rem;
          padding:.75rem 1rem calc(.75rem + env(safe-area-inset-bottom));
-         background:rgba(255,255,255,.78); backdrop-filter:blur(10px);
-         border-top:1px solid var(--line); }
+         background:rgba(11,16,32,.72); backdrop-filter:blur(12px);
+         border-top:1px solid rgba(200,162,75,.28); }
   form > div { display:flex; gap:.55rem; max-width:44rem; width:100%; margin:0 auto; }
-  #box { flex:1; padding:.8rem 1.05rem; border:1px solid var(--line); border-radius:999px;
-          font:inherit; font-size:.95rem; background:#fff; }
+  #box { flex:1; padding:.8rem 1.05rem; border:1px solid rgba(255,255,255,.18); border-radius:999px;
+          font:inherit; font-size:.95rem; background:#fff; color:var(--ink); }
   #box:focus { outline:2px solid var(--accent); border-color:var(--accent); }
   #send { padding:.8rem 1.35rem; border:0; border-radius:999px; cursor:pointer;
           background:linear-gradient(180deg,var(--ink),var(--ink2)); color:#fff;
