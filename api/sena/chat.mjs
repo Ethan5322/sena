@@ -281,14 +281,18 @@ async function handleFlow(flow, session, router, hotelId, res) {
       currency: hold.currency,
       hold_minutes: hold.hold_minutes,
       pay_url: pay?.pay_url || null,
+      // The check-in code IS the verification number. Shown in the chat and put
+      // on the downloadable confirmation, so the guest ALWAYS has it — even when
+      // the email does not deliver (Resend test sender / unverified domain).
       check_in_code: pay?.check_in_code || null,
-      // The check-in code IS the verification number, and the confirmation
-      // document (MuleSoo stamp, terms, QR) now serves pending bookings too —
-      // this is the pay-later guest's "download my PDF" button.
+      guest_id_number: pay?.guest_id_number || null,
+      // The confirmation document (guest details, terms, e-signature, QR, both
+      // numbers) — the pay-later guest's "download my PDF" button, and now shown
+      // to every guest after booking.
       confirmation_url: pay?.check_in_code
         ? '/api/sena/confirmation?v=' + encodeURIComponent(pay.check_in_code)
         : null,
-      email_sent: !!pay?.ok,
+      email_delivered: pay?.email_delivered === true,
     });
   }
 
@@ -1105,46 +1109,61 @@ const PAGE = `<!doctype html>
     });
   }
 
+  function downloadConfirmation(url) {
+    if (!url) return;
+    var dl = document.createElement('a');
+    dl.className = 'action pay';
+    dl.href = url; dl.target = '_blank'; dl.rel = 'noopener';
+    dl.textContent = '⬇ Download booking confirmation (PDF)';
+    thread.appendChild(dl); scroll();
+  }
+
+  // Shown after EVERY booking, before the pay choice: the check-in code, the
+  // guest ID number, and the downloadable confirmation — so the guest always
+  // has what they need to check in, even if the email never arrives.
+  function showCredentials(b) {
+    renderActions({ check_in_code: b.check_in_code });     // the code box (also saved for the check-in page)
+    if (b.guest_id_number) {
+      var g = document.createElement('div');
+      g.className = 'codebox';
+      g.innerHTML = '<div class="k">Guest ID number</div>';
+      var gv = document.createElement('div'); gv.className = 'v'; gv.textContent = b.guest_id_number;
+      g.appendChild(gv); thread.appendChild(g);
+    }
+    downloadConfirmation(b.confirmation_url);
+    if (b.email_delivered) {
+      sena('I have also emailed these details to ' + FLOW.email + '.');
+    } else {
+      sena('Important: please SAVE your check-in code above — or download the confirmation — because ' +
+        'it is what you type on arrival to check in. (I could not reach your email just now.)');
+    }
+  }
+
   function payChoice(b) {
-    sena('You are booked, ' + (FLOW.full_name.split(' ')[0]) + '. Your reference is ' + b.reference +
-      ' and your total is ' + b.currency + ' ' + b.total + '.' +
-      (b.email_sent ? ' I have emailed the full confirmation to you.' : '') +
-      '\\n\\nWould you like to pay now, or pay when you arrive?');
+    sena('You are booked, ' + (FLOW.full_name.split(' ')[0]) + '! Your reference is ' + b.reference +
+      ' and your total is ' + b.currency + ' ' + b.total + '.');
+    showCredentials(b);
+    sena('Would you like to pay now, or pay when you arrive?');
     chipRow([
       { label: '💳 Pay now', go: function () {
         me('I will pay now');
-        sena('Opening a secure online payment page for you now. Your room will be held for ' +
-          b.hold_minutes + ' minutes while you make payment.');
-        if (b.pay_url) {
-          window.open(b.pay_url, '_blank', 'noopener');
-          renderActions({ pay_url: b.pay_url, check_in_code: b.check_in_code });
-        }
+        sena('Opening the secure Paystack payment page. Your room is held for ' + b.hold_minutes + ' minutes.');
+        if (b.pay_url) { window.open(b.pay_url, '_blank', 'noopener'); renderActions({ pay_url: b.pay_url }); }
         finishNote(b);
       } },
       { label: '🏨 Pay on arrival', go: function () {
         me('I will pay on arrival');
-        sena('You can also choose to pay on arrival at the front desk. Please download your ' +
-          'booking confirmation below. It includes your booking details, terms, and your ' +
-          'verification QR code. If you do not arrive within 48 hours of your check-in time, ' +
-          'the booking may expire automatically.');
-        if (b.confirmation_url) {
-          var dl = document.createElement('a');
-          dl.className = 'action pay';
-          dl.href = b.confirmation_url;
-          dl.target = '_blank'; dl.rel = 'noopener';
-          dl.textContent = '⬇ Download my booking confirmation (PDF)';
-          thread.appendChild(dl);
-        }
-        renderActions({ check_in_code: b.check_in_code });
+        sena('Perfectly fine — you can settle at the front desk. Keep your check-in code and confirmation ' +
+          'above. If you do not arrive within 48 hours of your check-in time, the booking may expire.');
         finishNote(b);
       } },
     ]);
   }
 
   function finishNote(b) {
-    sena('On arrival, please enter your check-in code on our reception page or scan the QR code ' +
-      'on your confirmation at the desk, and take a quick photo. This issues your guest ID and ' +
-      'completes your check-in securely. Is there anything else I can assist you with today?');
+    sena('On arrival, enter your check-in code on our reception page (or scan the QR on your confirmation ' +
+      'at the desk) and take a quick photo — your guest ID is issued and you are checked in. Is there ' +
+      'anything else I can help you with?');
   }
 
   $('bookbtn').onclick = function () { me('I would like to book a room'); startBooking(); };

@@ -119,10 +119,22 @@ tr.total td:last-child { color: var(--primary); }
 .verify .k { font-size: .68rem; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
 .verify .num { font: 800 1.7rem 'Sora', monospace; letter-spacing: .18em; margin: .1rem 0 .15rem; }
 .verify p { font-size: .8rem; color: var(--muted); margin-top: .2rem; }
+.verify .gid { font-size: .74rem; color: var(--muted); letter-spacing: .04em; margin-bottom: .1rem; }
 
-/* ── Policy ── */
-.policy { margin-top: 1.4rem; font-size: .8rem; color: var(--muted); }
-.policy strong { color: var(--ink); }
+/* ── Terms & conditions ── */
+.terms { margin-top: 1.4rem; }
+.terms h2 { font-size: .78rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 .4rem; }
+.terms ol { margin: 0; padding-left: 1.1rem; font-size: .74rem; color: #3F444C; line-height: 1.5; }
+.terms li { margin: .22rem 0; }
+.terms strong { color: var(--ink); }
+
+/* ── Electronic signature ── */
+.esign { margin-top: 1.3rem; display: flex; gap: 1.3rem; align-items: flex-end; }
+.esign > div { flex: none; text-align: center; }
+.esign .sig { font: 400 1.55rem 'Segoe Script','Brush Script MT','Comic Sans MS',cursive; color: var(--ink); padding: 0 1rem .05rem; white-space: nowrap; }
+.esign .sigrule { border-bottom: 1.5px solid var(--ink); min-width: 12rem; margin-bottom: .3rem; }
+.esign .k { font-size: .64rem; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.esign p { font-size: .72rem; color: var(--muted); margin: 0; line-height: 1.5; }
 
 /* ── Footer ── */
 footer {
@@ -207,13 +219,33 @@ footer img { height: 34px; }
     <div>
       <div class="k">Your check-in code</div>
       <div class="num">{{verification_number}}</div>
+      <div class="gid">Guest ID No. {{guest_id_number}}</div>
       <p>On arrival, type this code on the reception page — or present this QR at
          the front desk — to check in. It works exactly once.</p>
     </div>
   </section>
 
-  <section class="policy">
-    <strong>Cancellation policy:</strong> {{cancellation_policy}}
+  <section class="terms">
+    <h2>Terms &amp; conditions</h2>
+    <ol>
+      <li>Check-in is from {{check_in_time}} and check-out is by {{check_out_time}}. A valid photo ID is required on arrival.</li>
+      <li>Your check-in code and Guest ID are single-use and personal to the named guest. Please do not share them.</li>
+      <li><strong>Cancellation:</strong> {{cancellation_policy}}</li>
+      <li>If the booking is unpaid on arrival, payment is settled at the front desk. A booking not claimed within 48&nbsp;hours of the check-in time may be released.</li>
+      <li>The guest is responsible for any loss or damage to hotel property during the stay. House rules apply throughout.</li>
+      <li>Personal data is processed only to manage your stay and is handled under POPIA; your arrival photo is deleted automatically when your stay ends.</li>
+    </ol>
+  </section>
+
+  <section class="esign">
+    <div>
+      <div class="sig">{{guest_name}}</div>
+      <div class="sigrule"></div>
+      <div class="k">Guest — electronic signature</div>
+    </div>
+    <p>Electronically confirmed by <strong>{{guest_name}}</strong> on {{issued_at}} for booking
+       <strong>{{reference}}</strong>. Completing this booking through Sena constitutes acceptance
+       of the terms and conditions above. No handwritten signature is required.</p>
   </section>
 
   <footer>

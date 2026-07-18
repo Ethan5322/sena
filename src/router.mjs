@@ -372,25 +372,34 @@ export function createRouter({
       ]
     );
 
-    if (!sent.ok) {
-      return {
-        ok: false,
-        reason: 'link_not_delivered',
-        say: `The link did not go through. Apologise and escalate — do not keep retrying.`,
-      };
-    }
-
+    // A FAILED EMAIL MUST NOT THROW AWAY A VALID CODE. The check-in code and the
+    // payment link are minted and real whether or not the email left the
+    // building — and in chat they are shown right in the thread, so the guest
+    // has them regardless. (In the demo, Resend's test sender only delivers to
+    // the account owner until a domain is verified, so guest email always
+    // "fails" — that must not block the guest from checking in.) We surface the
+    // code and link either way and flag the delivery, instead of returning a
+    // failure that erased everything.
     return {
       ok: true,
       total: toMajor(amount),
       currency: s.hotel.currency,
       channel: notifier.channel,
       sent_to: guest.email,
+      email_delivered: sent.ok === true,
+      email_error: sent.ok ? null : String(sent.error || 'send failed'),
       hold_minutes: s.hotel.hold_minutes,
-      // For CHAT, where a button can be shown. On a CALL, Sena never reads a
-      // URL aloud (system prompt) — the email remains the guest's copy.
+      // Shown in chat as a button (pay) and a code (check-in). On a CALL, Sena
+      // never reads a URL aloud — the email is the guest's copy there, so if
+      // email failed on a call the say-field below tells her to escalate.
       pay_url: authorization_url,
       check_in_code: guestId.verification_number,
+      guest_id_number: guestId.guest_id_number,
+      say: sent.ok
+        ? undefined
+        : `The confirmation email did not go through, but the guest can still see and use their ` +
+          `check-in code. On a voice call, read nothing aloud — tell them to check the chat or the ` +
+          `front desk, and alert a person.`,
     };
   }
 
