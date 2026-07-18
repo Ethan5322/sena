@@ -43,7 +43,19 @@ RUN mkdir -p /voices && cd /voices \
 # whichever the env picks at runtime must already be here, or the download
 # comes back. base adds ~75MB to an image that is already 2GB.
 ARG WHISPER_MODELS="small base"
-RUN python -c "from faster_whisper import WhisperModel; import os; [WhisperModel(m, device='cpu', compute_type='int8') for m in '${WHISPER_MODELS}'.split()]"
+# Retry the HuggingFace download: from some networks it times out one try in
+# three, and without this the WHOLE image build dies on a transient blip (it
+# repeatedly did). Five attempts per model with a short backoff turns a flaky
+# download into a slow-but-successful one.
+RUN for m in ${WHISPER_MODELS}; do \
+      n=0; \
+      until python -c "from faster_whisper import WhisperModel; WhisperModel('$m', device='cpu', compute_type='int8')"; do \
+        n=$((n+1)); \
+        if [ $n -ge 5 ]; then echo "whisper $m failed after 5 tries" && exit 1; fi; \
+        echo "whisper $m: download blip, retry $n in 5s"; sleep 5; \
+      done; \
+      echo "whisper $m ready"; \
+    done
 
 COPY agent/ /app/agent/
 COPY web/ /app/web/
