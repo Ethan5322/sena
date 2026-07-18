@@ -85,6 +85,10 @@ services:
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
       WHISPER_MODEL: ${WHISPER_MODEL:-small}
       PIPER_VOICE: ${PIPER_VOICE:-/voices/en_GB-cori-medium.onnx}
+      # How loudly Sena speaks. Piper masters its voices quiet; a digital gain
+      # (hard-clipped) makes her carry on a phone. 1.0 disables, ~2.0 is loud
+      # and still clear, higher starts to distort.
+      PIPER_GAIN: ${PIPER_GAIN:-2.0}
 
       SENA_ALLOWED_ORIGINS: ${SENA_ALLOWED_ORIGINS:-*}
       # /connect spawns one bot process per call; uncapped, it is a fork bomb

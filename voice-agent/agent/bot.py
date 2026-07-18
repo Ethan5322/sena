@@ -252,7 +252,19 @@ async def run_bot(room: str, hotel_id: str, token: str, parts: WarmParts | None 
     def make_handler(name: str):
         async def handler(params):
             args = params.arguments or {}
-            result = await client.call_tool(name, args, call)
+            try:
+                result = await client.call_tool(name, args, call)
+            except Exception as exc:  # noqa: BLE001
+                # A failed tool (the API timed out, the DB blinked) must NOT end
+                # the turn in silence — the guest hears nothing and thinks the
+                # line is dead. Hand the model a spoken apology to say instead.
+                log.error("tool %s failed: %s", name, exc)
+                await params.result_callback({
+                    "ok": False,
+                    "say": "Say, warmly: I'm so sorry, I had a brief problem "
+                           "on my side just then. Could you say that once more?",
+                })
+                return
 
             # There is no line to transfer to on a browser call. The router's
             # `say` carries the real handover (WhatsApp the manager directly —
